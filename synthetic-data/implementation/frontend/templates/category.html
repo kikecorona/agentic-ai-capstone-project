@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ category }}</h1>
+<div class="grid">
+  {% for a in items['items'] %}
+  <a class="card" href="{{ url_for('app_detail', app_id=a.id) }}">
+    <div class="icon">{{ a.icon_emoji }}</div>
+    <div class="meta">
+      <div class="name">{{ a.name }}</div>
+      <div class="dev">{{ a.developer }}</div>
+      <div class="price">{% if a.price_cents == 0 %}Free{% else %}${{ '%.2f' | format(a.price_cents/100) }}{% endif %}</div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

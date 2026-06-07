@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+{% if current_user %}
+<h1>Hello, {{ current_user.display_name }}</h1>
+<form method="post"><input type="hidden" name="action" value="logout"><button>Sign out</button></form>
+
+<section>
+  <h2>Your library</h2>
+  {% if library %}
+  <div class="grid">
+    {% for a in library %}
+    <a class="card" href="{{ url_for('app_detail', app_id=a.id) }}">
+      <div class="icon">{{ a.icon_emoji }}</div>
+      <div class="meta"><div class="name">{{ a.name }}</div><div class="dev">{{ a.developer }}</div></div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}<p>You haven't bought anything yet.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Your PearCare plans</h2>
+  {% if pearcare %}
+  <ul>
+    {% for e in pearcare %}
+    <li>
+      <strong>{{ e.plan_name }}</strong> — app {{ e.app_id }} · expires {{ e.expires_at }}
+      <form method="post" action="{{ url_for('file_claim') }}">
+        <input type="hidden" name="enrollment_id" value="{{ e.id }}">
+        <input type="text" name="issue" placeholder="Describe the issue">
+        <button>File claim</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p>No active plans.</p>{% endif %}
+</section>
+
+{% else %}
+<h1>Sign in</h1>
+<form method="post" class="auth">
+  <input type="hidden" name="action" value="login">
+  <input type="email" name="email" placeholder="Email" required>
+  <input type="password" name="password" placeholder="Password" required>
+  <button>Sign in</button>
+</form>
+
+<h2>Or register</h2>
+<form method="post" class="auth">
+  <input type="hidden" name="action" value="register">
+  <input type="text" name="display_name" placeholder="Display name">
+  <input type="email" name="email" placeholder="Email" required>
+  <input type="password" name="password" placeholder="Password" required>
+  <button>Create account</button>
+</form>
+
+<p class="hint">
+  Demo accounts: <code>ada@pearstore.dev</code> / <code>enigma</code>,
+  <code>grace@pearstore.dev</code> / <code>cobol</code>.
+</p>
+{% endif %}
+{% endblock %}

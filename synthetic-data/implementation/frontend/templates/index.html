@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <h1>Top Charts</h1>
+  <div class="grid">
+    {% for a in charts %}
+    <a class="card" href="{{ url_for('app_detail', app_id=a.id) }}">
+      <div class="icon">{{ a.icon_emoji }}</div>
+      <div class="meta">
+        <div class="name">{{ a.name }}</div>
+        <div class="dev">{{ a.developer }}</div>
+        <div class="price">{% if a.price_cents == 0 %}Free{% else %}${{ '%.2f' | format(a.price_cents/100) }}{% endif %}</div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+
+<section>
+  <h2>Browse by Category</h2>
+  <ul class="cats">
+    {% for c in categories %}<li><a href="{{ url_for('category', name=c) }}">{{ c }}</a></li>{% endfor %}
+  </ul>
+</section>
+{% endblock %}

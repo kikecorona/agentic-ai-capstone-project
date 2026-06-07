@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Order {{ order.id[:8] }}</h1>
+<p>Status: <strong>{{ order.status }}</strong> — total ${{ '%.2f' | format(order.total_cents/100) }}</p>
+
+{% if receipt %}
+<h2>Your downloads</h2>
+<ul>
+  {% for e in receipt.entitlements %}
+  <li>
+    <code>{{ e.app_id }}</code> — license {{ e.license.license_id[:14] }}…
+    <ul>
+      {% for d in e.downloads %}
+      <li>{{ d.platform }}: <a href="{{ d.url }}">{{ d.url }}</a></li>
+      {% endfor %}
+    </ul>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<p><a href="{{ url_for('account') }}">Back to your library</a></p>
+{% endblock %}

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Pear Store{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <a class="brand" href="{{ url_for('index') }}">🍐 Pear Store</a>
+  <form class="searchbar" action="{{ url_for('search') }}" method="get">
+    <input type="search" name="q" placeholder="Search apps and developers" value="{{ request.args.get('q','') }}">
+  </form>
+  <nav>
+    <a href="{{ url_for('cart') }}">Cart</a>
+    <a href="{{ url_for('account') }}">
+      {% if current_user %}{{ current_user.display_name }}{% else %}Sign in{% endif %}
+    </a>
+  </nav>
+</header>
+
+{% with messages = get_flashed_messages() %}
+  {% if messages %}<ul class="flash">{% for m in messages %}<li>{{ m }}</li>{% endfor %}</ul>{% endif %}
+{% endwith %}
+
+<main>{% block content %}{% endblock %}</main>
+
+<footer>
+  <small>Pear Store — synthetic demo storefront</small>
+</footer>
+</body>
+</html>

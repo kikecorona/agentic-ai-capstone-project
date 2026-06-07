@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ app.name }} — Pear Store{% endblock %}
+{% block content %}
+<article class="detail">
+  <div class="hero-row">
+    <div class="big-icon">{{ app.icon_emoji }}</div>
+    <div>
+      <h1>{{ app.name }}</h1>
+      <p class="dev">{{ app.developer }} · {{ app.category }}</p>
+      <p class="rating">★ {{ app.rating }} ({{ app.rating_count }})</p>
+      <p class="price">{% if app.price_cents == 0 %}Free{% else %}${{ '%.2f' | format(app.price_cents/100) }}{% endif %}</p>
+
+      <form action="{{ url_for('cart_add') }}" method="post">
+        <input type="hidden" name="app_id" value="{{ app.id }}">
+        {% if plans %}
+          <fieldset class="pearcare">
+            <legend>Add PearCare protection</legend>
+            {% for p in plans %}
+            <label>
+              <input type="radio" name="plan_id" value="{{ p.id }}">
+              {{ p.name }} — ${{ '%.2f' | format(p.price_cents/100) }}
+              <small>{{ p.term_months }}mo · covers {{ p.coverage|join(', ') }}</small>
+            </label>
+            {% endfor %}
+            <label><input type="radio" name="plan_id" value="" checked> No protection</label>
+          </fieldset>
+        {% endif %}
+        <button class="buy" type="submit">Add to cart</button>
+      </form>
+    </div>
+  </div>
+
+  <section>
+    <h2>About</h2>
+    <p>{{ app.description }}</p>
+    <p class="meta">v{{ app.version }} · {{ app.size_mb }} MB · bundle {{ app.bundle_id }}</p>
+  </section>
+
+  <section>
+    <h2>Reviews</h2>
+    {% if reviews %}
+      <ul class="reviews">
+        {% for r in reviews %}
+        <li>
+          <strong>{{ r.title or '(no title)' }}</strong> · {{ '★' * r.stars }}
+          <p>{{ r.body }}</p>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No reviews yet.</p>
+    {% endif %}
+  </section>
+</article>
+{% endblock %}

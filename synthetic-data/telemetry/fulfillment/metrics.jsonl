@@ -1,0 +1,2 @@
+{"kind":"counter","name":"fulfillment_requests_total","service":"fulfillment","value":1,"attributes":{"http.method":"GET","http.route":"/users/edb7279f-3d2a-46c7-b179-73b2cd3a7ebd/library","http.status_code":200,"status":"success"},"ts":1780872091.499286}
+{"kind":"histogram","name":"fulfillment_request_duration_ms","service":"fulfillment","value":1.601,"attributes":{"http.method":"GET","http.route":"/users/edb7279f-3d2a-46c7-b179-73b2cd3a7ebd/library","http.status_code":200,"status":"success"},"ts":1780872091.5001988}

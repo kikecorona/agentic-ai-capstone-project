@@ -1,0 +1,23 @@
+title: Agentic AI Capstone Project
+description: Research Agent for Org Knowledge — capstone project by Enrique R. Corona Dominguez.
+author:
+  name: Enrique R. Corona Dominguez
+
+# Slate — one of the GitHub Pages supported themes.
+theme: jekyll-theme-slate
+
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+
+# Keep build artefacts and non-content directories out of the published site.
+exclude:
+  - .idea/
+  - .gitignore
+  - "*.iml"
+  - playground/
+  - implementation/
+  - synthetic-data/
+  - Gemfile
+  - Gemfile.lock
+  - vendor/
