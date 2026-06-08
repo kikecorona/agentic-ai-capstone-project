@@ -306,14 +306,18 @@ below threshold, and break ties with a secondary signal.
 - **Dependency graph inference (Section 3.2)** — telemetry agreement score. The percentage of edges in the candidate
   graph that match observed traffic from the Monitoring MCP, weighted by call volume.
 
-**Who performs the evaluation** — a combination:
+**Who performs the evaluation** — all three flavors are wired in as nodes (or tool calls invoked from nodes) of the
+**LangGraph `StateGraph`** that drives the loop (see Section 7.5). The `score` node dispatches to the right evaluator
+based on the decision point:
 
-- **Heuristic checks** for RAG, written as plain Python functions inside the LangChain pipeline.
-- **Critic LLM** for gap reconciliation, run as a separate role with the rubric prompt.
-- **Tool calls** for dependency verification — the Monitoring MCP provides the ground truth and the controller computes
-  the agreement score.
+- **Heuristic checks** for RAG, written as plain Python functions and called directly from the `score` node.
+- **Critic LLM** for gap reconciliation, run as a separate **CrewAI** role with the rubric prompt and invoked from the
+  `score` node.
+- **Tool calls** for dependency verification — the `score` node calls the **Monitoring MCP** to get the ground truth
+  and computes the agreement score in graph state.
 
-**Pruning thresholds**:
+**Pruning thresholds** — applied by the `prune` node, which reads the scored candidates from graph state and writes
+back the survivors:
 
 - Keep a branch if its score is greater or equal than the per-use-case threshold:
     - RAG — similarity-over-M ≥ 0.7.
@@ -362,19 +366,28 @@ How the strategy is constrained:
 
 ### 7.5 Mapping ToT roles to tools
 
-- **Thought generator** — implemented in **LangChain** as an LCEL chain with a prompt template per decision point. It
-  calls the LLM K times to produce the initial candidate thoughts.
+- **Thought generator** — a node inside the controller's **LangGraph `StateGraph`** that wraps an **LCEL prompt + LLM
+  call**. It runs once at the start of the loop to produce the K initial candidate thoughts and writes them straight
+  into the graph state. Keeping it as a node (instead of a separate LCEL chain) avoids a hand-off and lets the rest of
+  the loop share the same typed state from the first step.
 - **Critic / evaluator** — split across the three evaluation flavors:
-    - **Heuristic checks** for RAG, written as plain Python functions inside the LangChain pipeline.
+    - **Heuristic checks** for RAG, written as plain Python functions and called directly from the `score` node of the
+      LangGraph.
     - **Critic agent** for gap reconciliation, defined as a separate **CrewAI** role with the rubric prompt. Keeping the
       critic in CrewAI gives us a clean separation between the agent producing thoughts and the agent judging them.
     - **Tool calls** for dependency verification, executed against the **Monitoring MCP**.
-- **Decision maker / controller** — implemented in **LangChain** as the beam-search loop (LCEL graph). It lives inside
-  the B&P or SA Service and drives expansion, scoring, pruning, and tie-breaking.
+- **Decision maker / controller** — implemented as a **LangGraph `StateGraph`**. The beam-search loop is a graph with
+  nodes for `expand`, `score`, `prune`, and `check_threshold`, plus a cyclic edge back to `expand` until depth **D** or
+  the threshold is hit. LangGraph fits better than plain LCEL here because the loop is stateful, cyclic, and has
+  conditional early-exit edges. The controller lives inside the B&P or SA Service.
 - **Memory / state manager**:
-    - **MCP** holds the in-flight branch state (active candidates, scores, accumulated evidence) so the controller and
-      the critic share a consistent view.
+    - **LangGraph state** holds the in-flight branch state (active candidates, scores, accumulated evidence) — the
+      typed state object is threaded through every node automatically.
+    - **MCP** exposes that state externally so other components (or the orchestrator) can observe a ToT loop in
+      progress if needed.
     - The B&P / SA long-term storage (Section 4) holds the final decision once the loop converges.
+
+> Note: We replaced LangChain with LangGraph since LangChain is in a deprecation path. 
 
 ### 7.6 Insertion point in the architecture
 
@@ -417,7 +430,7 @@ We'll adopt **ToT selectively** rather than globally:
 
 ## 8. High-Level Architecture
 
-The following Mermaid diagram shows the high-level architecture considering tooling, augmented retrieval components, and
+The following diagram shows the high-level architecture considering tooling, augmented retrieval components, and
 the ToT loops described in Section 7.
 
 ```mermaid
