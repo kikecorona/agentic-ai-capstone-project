@@ -1,8 +1,8 @@
 # Capstone Project — Research Agent for Org Knowledge
 
-**Author:** Enrique R. Corona Dominguez
+Enrique R. Corona Dominguez
 
-## 1. Introduction
+## 1. Introduction (Module 1)
 
 ### 1.1 Background and scope of the problem
 
@@ -66,7 +66,7 @@ documentation.
 The questions can be asked via Slack or email to the SMEs and can enrich the knowledge base directly or provide new
 documentation to be ingested.
 
-### 2.2 Initial feedback loop (Module 1)
+### 2.2 Initial feedback loop
 
 Our agent will be an expert on our system, so it will need to understand our products, system's architecture, and
 dependencies. The high-level feedback loop:
