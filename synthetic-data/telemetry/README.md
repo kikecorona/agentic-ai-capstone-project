@@ -32,7 +32,7 @@ gaps to find:
 | catalog          | LOW    | none (gap — `emit_traces=False`)   | `catalog_requests_total`, `catalog_request_duration_ms` |
 | account, cart, review, search, pearcare-plan | NONE | —                       | —                                                       |
 
-See `synthetic-data/documentation/telemetry/` for per-service detail
+See `synthetic-data/documentation/sd/telemetry/` for per-service detail
 and the gap map.
 
 ## Schema

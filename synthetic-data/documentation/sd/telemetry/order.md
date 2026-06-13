@@ -97,7 +97,7 @@ The payment span is `status=ERROR`, the root span is also
 
 The fulfillment-crash row is currently a known dark spot — the
 service raises before it can increment a counter. Tracked in
-`runbooks/incident-response.md` (LOW).
+`../runbooks/incident-response.md` (LOW).
 
 ## Trace propagation
 

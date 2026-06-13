@@ -31,6 +31,12 @@ reliable knowledge system.
 I'm proposing to implement a **Research Agent** that can help our leadership, developers, and product managers have a
 complete view of the architecture, dependencies, progress, and known gaps of our systems.
 
+> **Why this matters** — modernization efforts in a 20+ year old org stall on a single recurring problem: nobody
+> has an accurate, current map of the system. Decisions get made on stale or incomplete documentation, dependencies
+> get discovered late, and gap analysis becomes weeks of manual archaeology. A Research Agent that **continuously
+> updates and enriches** the org's documentation collapses that lead time and gives every team — engineering,
+> product, leadership — a single source of truth they can trust.
+
 ### 1.4 Principles for our agent
 
 - **Read only** — The purpose of this agent is to gather, organize, present, and discover information and knowledge that
@@ -63,8 +69,8 @@ veracity of its findings since the documents used might not be up to date. With 
 tooling to ask questions to the **subject matter experts (SMEs)** in our org to answer unknowns or clarify conflicting
 documentation.
 
-The questions can be asked via Slack or email to the SMEs and can enrich the knowledge base directly or provide new
-documentation to be ingested.
+The questions are surfaced through the **Documentation Portal** (see [Section 8](PROJECT_ARCHITECTURE.md#8-high-level-architecture-module-5)) so SMEs can answer in a single
+place; their replies enrich the knowledge base directly or provide new documentation to be ingested.
 
 ### 2.2 Initial feedback loop
 
@@ -226,15 +232,17 @@ Retrieval quality is very important. We'll use a simple heuristic approach with 
 
 - What if we cannot reach a similarity result over M percent? Do we discard the document, tag it as a low-confidence
   source, or something else?
+- Same question at **query time**: if the Autonomous RAG loop in [Section 9.3.1](PROJECT_ARCHITECTURE.md#931-autonomous-rag-architecture-query-time) exhausts its rewrite budget without
+  finding relevant documents, do we escalate to an SME, return a low-confidence answer with the closest matches, or
+  refuse to answer?
 
----
 
 ## 7. Applying Tree of Thoughts — ToT (Module 4)
 
 > Disclaimer: this is a complex topic, unlike the previous sections, I did use Claude Code to help me identify where
 > were the best places to use ToT for this project.
 
-The reasoning loop defined in Section 3 follows a ReAct-style approach per sub-agent. However, some steps in our
+The reasoning loop defined in [Section 3](#3-proposed-reasoning-loop-module-2) follows a ReAct-style approach per sub-agent. However, some steps in our
 pipeline are **decision points with multiple plausible paths** where the agent's first choice may not be the best one.
 For those steps we'll apply **Tree of Thoughts (ToT)** — branching the reasoning into multiple candidate "thoughts,"
 evaluating them, and pruning the weaker ones.
@@ -249,7 +257,7 @@ ToT is a good fit when:
 
 We have identified 3 places in our design where this applies:
 
-1. **Chunking & indexing strategy selection (Section 6).** Today we propose iterating chunking strategies sequentially
+1. **Chunking & indexing strategy selection ([Section 6](#6-retrieval-design--rag-module-3)).** Today we propose iterating chunking strategies sequentially
    if the quality check fails. We'll replace this with ToT:
     - **Thoughts** — each candidate chunking strategy (per paragraph, per section, per N characters, summary-only,
       hybrid).
@@ -258,7 +266,7 @@ We have identified 3 places in our design where this applies:
     - **Search** — beam-search the top-K strategies and prune the rest. We keep the best chunking strategy per document
       instead of trying them one by one.
 
-2. **Gap-filling between code and design (Section 3.1, step 4).** When the implementation and the existing design don't
+2. **Gap-filling between code and design ([Section 3.1](#31-business--product-bp-pov), step 4).** When the implementation and the existing design don't
    match, the agent has to decide *how to reconcile them*. Several hypotheses are possible: the design is stale, the
    code is buggy, there is an undocumented feature, or scopes diverged. With ToT the agent can:
     - **Branch** into one hypothesis per candidate explanation.
@@ -267,7 +275,7 @@ We have identified 3 places in our design where this applies:
     - **Promote to SME** only the top branch(es) instead of escalating every gap. This reduces SME load and improves the
       quality of the questions we ask.
 
-3. **Inferring upstream/downstream dependencies (Section 3.2, step 3).** Call-pattern analysis can produce ambiguous
+3. **Inferring upstream/downstream dependencies ([Section 3.2](#32-systems-architecture-sa--sd-pov), step 3).** Call-pattern analysis can produce ambiguous
    results (multiple plausible upstream callers, indirect dependencies through brokers/queues). ToT lets the SA agent:
     - **Generate** several candidate dependency graphs.
     - **Verify** each against telemetry (Monitoring MCP), code references, and existing documentation.
@@ -288,7 +296,7 @@ We have identified 3 places in our design where this applies:
     - Stops early if the best candidate already meets a quality threshold.
 4. The agent returns the best candidate as the result of the decision point.
 
-For the first phase, we'll start with **B=2–3** and **D=2–3** to keep cost reasonable while still providing meaningful
+For the first phase, we'll start with **B=2–3** and **D=2–3** to keep wall-clock time manageable while still providing meaningful
 exploration.
 
 ### 7.3 Evaluation and pruning
@@ -298,16 +306,16 @@ below threshold, and break ties with a secondary signal.
 
 **Scoring rubric** — depends on the decision point:
 
-- **Chunking strategy (RAG, Section 6)** — similarity-over-M heuristic. Generate N student-style Q&A pairs from the
+- **Chunking strategy (RAG, [Section 6](#6-retrieval-design--rag-module-3))** — similarity-over-M heuristic. Generate N student-style Q&A pairs from the
   document, run the questions against the candidate's embeddings, and compute the percentage of questions whose top hit
   lands in the right chunk.
-- **Code/design gap reconciliation (Section 3.1)** — rubric-based score from a critic LLM. Three dimensions, each on a
+- **Code/design gap reconciliation ([Section 3.1](#31-business--product-bp-pov))** — rubric-based score from a critic LLM. Three dimensions, each on a
   0–3 scale: evidence coverage, internal consistency, and recency of sources.
-- **Dependency graph inference (Section 3.2)** — telemetry agreement score. The percentage of edges in the candidate
+- **Dependency graph inference ([Section 3.2](#32-systems-architecture-sa--sd-pov))** — telemetry agreement score. The percentage of edges in the candidate
   graph that match observed traffic from the Monitoring MCP, weighted by call volume.
 
 **Who performs the evaluation** — all three flavors are wired in as nodes (or tool calls invoked from nodes) of the
-**LangGraph `StateGraph`** that drives the loop (see Section 7.5). The `score` node dispatches to the right evaluator
+**LangGraph `StateGraph`** that drives the loop (see [Section 7.5](#75-mapping-tot-roles-to-tools)). The `score` node dispatches to the right evaluator
 based on the decision point:
 
 - **Heuristic checks** for RAG, written as plain Python functions and called directly from the `score` node.
@@ -329,7 +337,7 @@ back the survivors:
 **Failure conditions** — if no branch reaches the threshold at the maximum depth **D**, the agent falls back depending
 on the use case:
 
-- **RAG** — tag the document as a low-confidence source and continue (linked to the open question in Section 6.5).
+- **RAG** — tag the document as a low-confidence source and continue (linked to the open question in [Section 6.5](#65-open-questions)).
 - **Gap reconciliation** — escalate to an SME with the top branches as candidate explanations.
 - **Dependency graphs** — keep the highest-scoring graph and flag it for SME review.
 
@@ -345,7 +353,7 @@ with a secondary criterion:
 We'll use **beam search** as our primary strategy.
 
 Beam search is a middle ground between BFS and DFS: at every level we expand all surviving candidates, score them,
-and keep only the top **B** (the "beam width") for the next level. The rest are pruned. This bounds the cost at
+and keep only the top **B** (the "beam width") for the next level. The rest are pruned. This bounds the work at
 **K + B × D** expansions while still keeping multiple alternatives alive in case the evaluator is noisy.
 
 Why beam search fits our use cases:
@@ -353,16 +361,17 @@ Why beam search fits our use cases:
 - Our decision points have a **small, finite candidate space** (3–5 chunking strategies, 3–4 reconciliation hypotheses,
   a handful of plausible graphs). BFS would expand every branch wastefully, DFS could commit early to a bad path, and
   Monte Carlo sampling is overkill for spaces this small.
-- Beam search keeps a **fixed number of candidates per level (B)**, which makes the cost predictable — important since
-  these loops run inside the orchestration cycle (Section 3.3) and we need to bound wall-clock time per project.
+- Beam search keeps a **fixed number of candidates per level (B)**, which keeps the per-loop work predictable —
+  important since these loops run inside the orchestration cycle ([Section 3.3](#33-orchestration-loop)) and we need
+  to bound wall-clock time per project.
 - It naturally supports falling back to the surviving beam if a level fails to produce candidates above threshold.
 
 How the strategy is constrained:
 
 - **Compute** — total LLM/tool calls per loop ≈ K + (B × D). With K=4, B=2, D=3 this is around 10 calls per decision.
 - **Latency** — we cap depth at **D=3**, so a single ToT loop completes in roughly the time of 3 sequential ReAct turns.
-- **Cost** — each branch has a token budget (e.g., 4k input + 1k output). The controller short-circuits if the running
-  total exceeds 3× the budget of a single ReAct chain for the same step.
+- **Context** — each branch keeps its prompt within the local LLM's context window. Branches that would overflow are
+  short-circuited and the highest-scoring partial result is kept.
 
 ### 7.5 Mapping ToT roles to tools
 
@@ -385,13 +394,13 @@ How the strategy is constrained:
       typed state object is threaded through every node automatically.
     - **MCP** exposes that state externally so other components (or the orchestrator) can observe a ToT loop in
       progress if needed.
-    - The B&P / SA long-term storage (Section 4) holds the final decision once the loop converges.
+    - The B&P / SA long-term storage ([Section 4](#4-types-of-memory)) holds the final decision once the loop converges.
 
 > Note: We replaced LangChain with LangGraph since LangChain is in a deprecation path. 
 
 ### 7.6 Insertion point in the architecture
 
-Referring to the high-level architecture in Section 8:
+Referring to the high-level architecture in [Section 8](PROJECT_ARCHITECTURE.md#8-high-level-architecture-module-5):
 
 - **Inside the B&P Service** — ToT runs as a sub-routine of the RAG indexing pipeline that writes to the **Embeddings
   Database**. The insertion point is the step that selects the chunking strategy per document, before the embeddings are
@@ -428,94 +437,5 @@ We'll adopt **ToT selectively** rather than globally:
 
 ---
 
-## 8. High-Level Architecture
+The high-level and low-level design (Sections 8 and 9) lives in [PROJECT_ARCHITECTURE.md](PROJECT_ARCHITECTURE.md).
 
-The following diagram shows the high-level architecture considering tooling, augmented retrieval components, and
-the ToT loops described in Section 7.
-
-```mermaid
-flowchart LR
-    Chatbot([Chatbot])
-    Claude([Claude])
-    Others([Other clients])
-    LLM[LLM API]
-    Quip([Quip])
-    GH([GitHub])
-
-    subgraph OC [Orchestrator]
-        OC_MCP[Orchestrator MCP]
-        OC_Service[Orchestrator Service<br/>ReAct]
-        OC_DS[(Datasources<br/>inventory)]
-        OC_MCP --- OC_Service
-        OC_Service --- OC_DS
-    end
-
-    subgraph BP [Business &amp; Product]
-        BP_MCP[B&amp;P MCP]
-        BP_Service[B&amp;P Service<br/>ReAct + ToT]
-        BP_ToT[/ToT loop<br/>chunking strategy/]
-        E_DS[(Embeddings<br/>Database)]
-        QUIP_MCP[Quip MCP]
-        BP_MCP --- BP_Service
-        BP_Service --- BP_ToT
-        BP_Service --- E_DS
-        BP_Service --- QUIP_MCP
-    end
-
-    subgraph SD [System Design]
-        SD_MCP[SD MCP]
-        SD_Service[SD Service<br/>ReAct + ToT]
-        SD_ToT[/ToT loop<br/>dependency graph/]
-        GH_MCP[GitHub MCP]
-        MON_MCP[Monitoring MCP]
-        SD_MCP --- SD_Service
-        SD_Service --- SD_ToT
-        SD_ToT --- MON_MCP
-        SD_Service --- GH_MCP
-        SD_Service --- MON_MCP
-    end
-
-    Chatbot --- OC_MCP
-    Claude --- OC_MCP
-    Others --- OC_MCP
-    OC_Service --- LLM
-    OC_Service --- BP_MCP
-    OC_Service --- SD_MCP
-    BP_Service --- LLM
-    BP_ToT --- LLM
-    BP_Service --- SD_MCP
-    SD_Service --- LLM
-    SD_ToT --- LLM
-    SD_Service --- BP_MCP
-    Quip --- BP_Service
-    GH --- SD_Service
-    GH_MCP --- GH
-
-    classDef oc fill:#E3F2FD,stroke:#1565C0,color:#0D47A1
-    classDef bp fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
-    classDef sd fill:#FFF3E0,stroke:#EF6C00,color:#E65100
-    classDef tot fill:#FCE4EC,stroke:#AD1457,color:#880E4F
-    class OC oc
-    class BP bp
-    class SD sd
-    class BP_ToT,SD_ToT tot
-```
-
-### 8.1 Notes on the architecture
-
-- The **"Service"** component of each agent contains the reasoning loop logic defined in Section 3 (Module 2).
-- The **Orchestrator** is the main agent that interacts with the MCPs of SD and B&P. It runs a plain **ReAct** loop —
-  no ToT.
-- The **B&P Service** runs a **ReAct + ToT** loop. The ToT sub-routine is invoked from the RAG indexing pipeline to
-  select the best chunking strategy per document (Section 7.1, use case 1).
-- The **SD Service** also runs a **ReAct + ToT** loop. The ToT sub-routine is invoked when inferring dependency graphs
-  and uses the **Monitoring MCP** as part of the evaluator (Section 7.1, use case 3).
-- For **B&P** the main deliverable is **Quip pages**.
-- For **SD** the main deliverable is **documentation in GitHub**.
-
-### 8.2 Considerations for the POC
-
-- Instead of Quip we might just use GitHub for documentation as well, to keep things simple.
-- For the POC we'll leave out the **Monitoring MCP** as input for the SD agent. Without it, the SD ToT loop will fall
-  back to code references and existing documentation as the only evaluator signals.
-- For the POC the ToT loops will run with **B=2–3** and **D=2–3** (Section 7.4) to keep cost predictable.

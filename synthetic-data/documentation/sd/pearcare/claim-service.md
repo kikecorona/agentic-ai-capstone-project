@@ -30,7 +30,7 @@ stateDiagram-v2
 
 If the operator does not pass an explicit `resolution`, the service
 calls `_auto_triage(issue, enrollment)`. It is a tiny keyword matcher
-described in `architecture/data-flow-pearcare-claim.md`. The output is
+described in `../architecture/data-flow-pearcare-claim.md`. The output is
 one of `support`, `repair`, `replacement`, `deny`.
 
 ## Hooks

@@ -16,7 +16,7 @@ and a timestamp — so a downstream tool can ingest the files without
 knowing the schema in advance.
 
 Coverage is intentionally uneven across services. See
-`synthetic-data/documentation/telemetry/README.md` for the gap map.
+`synthetic-data/documentation/sd/telemetry/README.md` for the gap map.
 """
 from __future__ import annotations
 

@@ -6,7 +6,8 @@ I'm proposing to implement a Research Agent that can help our leadership, develo
 
 ## Documents and links
 
-* [Project documentation](PROJECT.md)
+* [Project overview](PROJECT.md)
+* [Project architecture](PROJECT_ARCHITECTURE.md)
 * [Implementation](implementation)
 * [Synthetic data for testing the project](synthetic-data)
 * [Playground](playground)
@@ -22,11 +23,11 @@ so the agent has gaps to find:
 | Surface       | Where                                       | Uneven dimensions                                                                  |
 | ------------- | ------------------------------------------- | ---------------------------------------------------------------------------------- |
 | Service code  | `synthetic-data/implementation/services/`   | docstrings range from thorough to one-liner-with-typos; some hooks are stubs        |
-| Service docs  | `synthetic-data/documentation/services/`    | HIGH / MEDIUM / LOW / VERY LOW — `documentation/README.md` is the gap map           |
-| DB docs       | `synthetic-data/documentation/database/`    | three docs MISSING outright (`order`, `fulfillment`, `pearcare-plan`)               |
-| Telemetry     | `synthetic-data/telemetry/` + `documentation/telemetry/` | five services instrumented at different tiers (HIGH/MEDIUM/LOW), five emit nothing  |
-| Runbooks      | `synthetic-data/documentation/runbooks/`    | `pearcare-fraud.md` is a placeholder; `incident-response.md` is one-liner thin      |
-| Business docs | `synthetic-data/documentation/business-cases/` | refunds / piracy / cancellations are deliberately under-developed                 |
+| Service docs  | `synthetic-data/documentation/sd/services/` | HIGH / MEDIUM / LOW / VERY LOW — `documentation/README.md` is the gap map           |
+| DB docs       | `synthetic-data/documentation/sd/database/` | three docs MISSING outright (`order`, `fulfillment`, `pearcare-plan`)               |
+| Telemetry     | `synthetic-data/telemetry/` + `documentation/sd/telemetry/` | five services instrumented at different tiers (HIGH/MEDIUM/LOW), five emit nothing  |
+| Runbooks      | `synthetic-data/documentation/sd/runbooks/` | `pearcare-fraud.md` is a placeholder; `incident-response.md` is one-liner thin      |
+| Business docs | `synthetic-data/documentation/bp/business-cases/` | refunds / piracy / cancellations are deliberately under-developed                 |
 
 ### Telemetry coverage tiers
 
@@ -46,8 +47,8 @@ the services run:
   uninstrumented (deliberate gap; the doc gap agent should flag the
   five missing telemetry docs).
 
-The doc tree mirrors the same shape: `documentation/telemetry/order.md`
-is the HIGH-quality template, and `documentation/telemetry/search.md`
+The doc tree mirrors the same shape: `documentation/sd/telemetry/order.md`
+is the HIGH-quality template, and `documentation/sd/telemetry/search.md`
 is intentionally wrong (claims metrics that don't exist) so the
 verifier has something concrete to reconcile with code.
 

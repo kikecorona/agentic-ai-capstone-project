@@ -36,7 +36,7 @@ Concretely the flow is:
 
 * **Payment authorized but fulfillment failed.** The user is charged
   and the order sits in `paid`. *Today this requires a manual
-  refund* — see `runbooks/incident-response.md`. Closing this gap is
+  refund* — see `../../sd/runbooks/incident-response.md`. Closing this gap is
   the highest-priority follow-up.
 * **Catalog price drift.** If a price changes between "added to cart"
   and "checkout", we charge the new price. We chose this trade-off
