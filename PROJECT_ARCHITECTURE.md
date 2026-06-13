@@ -30,6 +30,13 @@ own a documentation domain and run their own LangGraph reasoning loop. Collabora
 **MCP-shaped contracts** — never direct function calls — so each agent can evolve or be replaced
 independently.
 
+**Why three agents.** The work splits naturally into two domains — *business/product* and
+*system/code* — and each one calls for a different kind of reasoning over a different kind of source
+material. Asking one agent to do both blurs that focus. The Orchestrator is the third because someone
+has to route work, track what's been documented, and hold the queue of open SME questions; that's not
+a fit for either specialist. A fourth agent (e.g., Security) can be added later when a new domain
+shows up, but stretching past three before then adds coordination cost without new capability.
+
 **Per-agent role:**
 
 - **Orchestrator agent** *(supervisor)*
@@ -228,6 +235,35 @@ class Trigger trigger
   agent services. This keeps the POC self-contained and removes external API dependencies; quality-sensitive
   nodes (the critic, the faithfulness re-grade) can switch to a larger model later if needed. Prompts are
   kept small and focused so they fit comfortably within the model's context window.
+
+### 8.4 Trade-offs and scalability
+
+**Reliability vs. latency.** Every reliability mechanism in this design is also a latency cost: the
+Auto-RAG rewrite loop, the ToT loops, and SME escalation each add wait time on top of a direct answer.
+Each one carries an explicit cap so worst-case latency stays predictable. The trade is deliberate:
+stale or hallucinated documentation is the failure mode we cannot afford, so we pay extra time on
+uncertain answers rather than ship a fast wrong one.
+
+**Coordination overhead vs. independence.** Routing every cross-agent call through MCPs and the
+Orchestrator costs an extra hop, but it keeps each agent independently replaceable and puts shared
+state in a single place. Direct calls would be faster but would entangle the agents and force
+coordinated deployments — a worse trade for a system meant to evolve.
+
+**Complexity vs. consistency.** B&P and SD each run in two modes (background and query) on the same
+graph, so both modes reuse the same domain logic. That keeps the separation of concerns clean and
+keeps fresh answers consistent with the last refresh.
+
+**Scalability.** Four properties let the design grow without rework:
+
+- **Parallel refresh fan-out** — the Orchestrator hands out one job per affected page and the
+  specialists work in parallel, so refresh time tracks the slowest page rather than the total number
+  of pages.
+- **New specialists plug in** — adding a new agent (e.g., Security) is a registration plus one
+  routing rule. Existing agents only learn about it when they need to link to its domain.
+- **New input sources plug in** — Confluence, Slack, Quip, and email enter through the same ingest
+  contract used by the GitHub source today; no changes to the rest of the pipeline.
+- **Resumable state** — the Orchestrator saves its progress as it goes. If a refresh crashes
+  partway, it picks up where it left off instead of restarting from scratch.
 
 ---
 
