@@ -13,7 +13,7 @@ main document.
 
 ## 8. High-Level Architecture (Module 5)
 
-As stated in [Section 1.3](PROJECT.md#13-proposed-solution), we're implementing a **Research Agent** that
+> As stated in [Section 1.3](PROJECT.md#13-proposed-solution), we're implementing a **Research Agent** that
 helps our leadership, developers, and product managers have a complete view of the architecture,
 dependencies, progress, and known gaps of our systems. Modernization efforts in a 20+ year old org stall
 on a single recurring problem: nobody has an accurate, current map of the system. Decisions get made on
@@ -76,16 +76,8 @@ to cross-reference it.
 
 ### 8.2 High-Level Architecture diagram
 
-The following diagram shows the high-level architecture considering tooling, augmented retrieval components, and
-the ToT loops described in [Section 7](PROJECT.md#7-applying-tree-of-thoughts--tot-module-4).
-
-A core goal of the agent ([Section 1.3](PROJECT.md#13-proposed-solution)) is to **update and enrich the org's system
-documentation**, not only to answer
-questions on demand. Because of that, both the **B&P** and **SD** services own a persistent **documentation store** as
-a first-class deliverable, and the two stores **cross-reference each other** so that a B&P page about a product links
-to the SD pages of the services that implement it, and an SD page about a service links back to the B&P pages of the
-products it serves. The MCPs remain the query/integration surface, but the documentation stores are what survive
-between runs and what humans actually consume.
+The following diagram shows the high-level architecture considering tooling, augmented retrieval components and
+ToT.
 
 > **Storage decision** — all generated documentation (B&P and SD) is persisted to **GitHub** as Markdown.
 > Cross-references between B&P and SD pages are plain relative Markdown links, so they live in the same review/PR
@@ -287,7 +279,7 @@ documented during the last refresh — they come from the same logic.
 step from `{pull_source, analyze_code, verify_telemetry, run_tot_dep_graph, resolve_bp_links,
 write_doc, focused_analyze, compose_answer, escalate, done}` based on the operating mode and the
 partial result so far. `act` calls the chosen sub-step (e.g., `analyze_code` is itself a five-step
-internal pipeline — see 9.2.1). `observe` writes the result back into graph state and a conditional
+internal pipeline — see [Section 9.2.1](#921-analyze_code)). `observe` writes the result back into graph state and a conditional
 edge loops back to `reason` until the action returns `done`. Background mode is mostly deterministic so
 the local LLM rarely deviates from the planned order; query mode is more active — the reasoner decides
 whether the existing page covers the question or focused code analysis is needed.
@@ -443,7 +435,7 @@ step from `{ingest_input_docs, run_tot_chunking, embed, resolve_sd_links, write_
 compose_answer, escalate, done}` based on the operating mode and partial result. `act` calls the chosen
 sub-step; `observe` writes the result back into graph state and a conditional edge loops back to
 `reason`. Background mode is mostly deterministic sequencing through the indexing pipeline; query mode
-hands off to the **Auto-RAG** sub-graph (9.3.1), which is its own ReAct-style loop with a `decide →
+hands off to the **Auto-RAG** sub-graph ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)), which is its own ReAct-style loop with a `decide →
 retrieve → grade → rewrite` cycle.
 
 ```mermaid
@@ -537,7 +529,7 @@ flowchart LR
 This node pulls input documents from the Git repo via the **GitHub MCP**, normalizes them (strips
 formatting metadata, collapses whitespace, resolves embedded references), and computes a content hash
 that the orchestrator's `doc index` uses to skip unchanged files on the next refresh. The node hands the
-normalized document and its metadata (source path, format, hash) to the chunking step (9.3.3). For the
+normalized document and its metadata (source path, format, hash) to the chunking step ([Section 9.3.3](#933-tot-chunking-strategy)). For the
 POC the input set is just hand-checked org docs in the same Git repo; later phases plug in additional
 MCPs (Confluence, Slack, etc.) without changing this node's contract.
 
@@ -613,7 +605,7 @@ but preserve ordering per page so cross-references stay consistent within a sing
 
 ### 9.5 SME interaction
 
-When the loop in 9.3.1 exhausts its rewrite budget — or the faithfulness check fails repeatedly — it escalates to a
+When the loop in [Section 9.3.1](#931-autonomous-rag-architecture-query-time) exhausts its rewrite budget — or the faithfulness check fails repeatedly — it escalates to a
 **subject matter expert** through the **Documentation Portal** ([Section 8](#8-high-level-architecture-module-5)). The
 goal is to enrich the knowledge
 base, not to block the user.
@@ -663,5 +655,5 @@ when its ToT gap-reconciliation evaluator can't pick a winner ([Section 7.7](PRO
 mitigation).
 
 If the SME's reply disagrees with the retrieved documents, those documents are flagged for refresh — the SME-driven
-counterpart of the index-quality feedback in 9.3.1. If no SME is available for a domain, the orchestrator records the
+counterpart of the index-quality feedback in [Section 9.3.1](#931-autonomous-rag-architecture-query-time). If no SME is available for a domain, the orchestrator records the
 gap in its inventory; it is a knowledge-base coverage problem, not a runtime error.
