@@ -167,7 +167,7 @@ classDef trigger fill: #FFEBEE, stroke:#C62828, color: #B71C1C
 class OC oc
 class BP bp
 class SD sd
-class BP_ToT, SD_ToT tot
+class BP_ToT,SD_ToT tot
 class OC_DS docs
 class Portal portal
 class Trigger trigger
@@ -314,10 +314,10 @@ flowchart LR
     classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
     classDef fallback fill: #FCE4EC, stroke: #AD1457, color: #880E4F
     classDef portal fill: #FFF9C4, stroke: #F57F17, color: #E65100
-    class Pull, AC, Tele, ToT, XR, Write, Read, ACFocus, Compose node
-    class Need, Conf decision
+    class Pull,AC,Tele,ToT,XR,Write,Read,ACFocus,Compose node
+    class Need,Conf decision
     class SME fallback
-    class Trig, Port, Done, Out portal
+    class Trig,Port,Done,Out portal
 ```
 
 #### 9.2.1 analyze_code
@@ -461,8 +461,8 @@ flowchart LR
     Compose --> Out([answer to Portal])
     classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
     classDef portal fill: #FFF9C4, stroke: #F57F17, color: #E65100
-    class Ingest, ToT, Embed, XR1, Write, Auto, XR2, Compose node
-    class Trig, Port, Done, Out portal
+    class Ingest,ToT,Embed,XR1,Write,Auto,XR2,Compose node
+    class Trig,Port,Done,Out portal
 ```
 
 #### 9.3.1 Autonomous RAG architecture (query time)
@@ -521,13 +521,13 @@ flowchart LR
     CF -->|no, budget exhausted| FB
     FB -->|low - confidence answer<br/>+ closest matches| A
     FB -->|ask SME via Portal| Portal([Documentation<br/>Portal])
-    Portal -.->|reply ingested as<br/>new BP doc, re - indexed| R
+    Portal -.->|reply ingested as<br/>new BP doc, re-indexed| R
     classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
     classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
     classDef fallback fill: #FCE4EC, stroke: #AD1457, color: #880E4F
     classDef portal fill: #FFF9C4, stroke: #F57F17, color: #E65100
-    class R, RW, Gen node
-    class D, G, CF decision
+    class R,RW,Gen node
+    class D,G,CF decision
     class FB fallback
     class Portal portal
 ```
