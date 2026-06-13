@@ -2,8 +2,13 @@
 
 Enrique R. Corona Dominguez
 
-This document continues from [PROJECT.md](PROJECT.md) (Sections 1–7) and covers the high-level ([Section 8](#8-high-level-architecture-module-5))
-and low-level ([Section 9](#9-low-level-design)) design of the Research Agent. References to earlier sections link back to the
+> Disclaimer: I wrote this with help from Claude Code, I provided a lot of guidance, suggestions, corrections and for the most part defined the high level architecture and
+> implementation details based on the course lectures.
+
+This document continues from [PROJECT.md](PROJECT.md) (Sections 1–7) and covers the
+high-level ([Section 8](#8-high-level-architecture-module-5))
+and low-level ([Section 9](#9-low-level-design)) design of the Research Agent. References to earlier sections link back
+to the
 main document.
 
 ## 8. High-Level Architecture (Module 5)
@@ -36,7 +41,8 @@ independently.
       delegated to a specialist.
 - **B&P agent** *(Business & Product specialist)*
     - **Owns** — the **BP pages in GitHub** and the **Embeddings Database**.
-    - **Does** — runs the indexing pipeline ([Section 6](PROJECT.md#6-retrieval-design--rag-module-3)), generates product and feature pages with
+    - **Does** — runs the indexing pipeline ([Section 6](PROJECT.md#6-retrieval-design--rag-module-3)), generates
+      product and feature pages with
       cross-references to SD pages, answers query-time questions through the Autonomous RAG loop
       ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)), resolves SD links via the SD MCP.
     - **Does not** — write into the SD pages or read source code directly; the SD MCP is the only path
@@ -44,7 +50,8 @@ independently.
 - **SD agent** *(System Design specialist)*
     - **Owns** — the **SD pages in GitHub**.
     - **Does** — analyzes source code via the GitHub MCP, cross-checks telemetry via the Monitoring MCP,
-      runs the ToT dep-graph loop ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 3), generates service/endpoint/dependency pages
+      runs the ToT dep-graph loop ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 3), generates
+      service/endpoint/dependency pages
       with cross-references to B&P pages, resolves B&P links via the B&P MCP.
     - **Does not** — write into the B&P pages or maintain embeddings; the B&P MCP is the only path to
       either.
@@ -72,7 +79,8 @@ to cross-reference it.
 The following diagram shows the high-level architecture considering tooling, augmented retrieval components, and
 the ToT loops described in [Section 7](PROJECT.md#7-applying-tree-of-thoughts--tot-module-4).
 
-A core goal of the agent ([Section 1.3](PROJECT.md#13-proposed-solution)) is to **update and enrich the org's system documentation**, not only to answer
+A core goal of the agent ([Section 1.3](PROJECT.md#13-proposed-solution)) is to **update and enrich the org's system
+documentation**, not only to answer
 questions on demand. Because of that, both the **B&P** and **SD** services own a persistent **documentation store** as
 a first-class deliverable, and the two stores **cross-reference each other** so that a B&P page about a product links
 to the SD pages of the services that implement it, and an SD page about a service links back to the B&P pages of the
@@ -85,9 +93,9 @@ between runs and what humans actually consume.
 >
 > **Two operating modes** — both **B&P** and **SD** run in two distinct flows:
 > - **Refresh path** — `Update Trigger → Orchestrator → BP/SD Service → updated docs + embeddings`. Driven by
->   schedule or by GitHub change events; this is the "continuous" half of the system.
+    > schedule or by GitHub change events; this is the "continuous" half of the system.
 > - **Query path** — `Portal → Orchestrator → BP/SD Service → answer back to Portal`. Driven by user chatbot
->   questions or SME interactions through the Portal.
+    > questions or SME interactions through the Portal.
 >
 > The two paths share the same agent services and MCPs; they differ only in entry point and depth of work.
 > [Section 9](#9-low-level-design) walks through the LangGraph designs that support both modes.
@@ -111,64 +119,65 @@ flowchart LR
         OC_Service --- OC_DS
     end
 
-    subgraph BP [Business &amp; Product]
-        BP_MCP[B&amp;P MCP]
-        BP_Service[B&amp;P Service<br/>ReAct + ToT + Auto-RAG]
-        BP_ToT[/ToT loop<br/>chunking strategy/]
-        E_DS[(Embeddings<br/>Database)]
-        BP_MCP --- BP_Service
-        BP_Service --- BP_ToT
-        BP_Service --- E_DS
-    end
+subgraph BP [Business &amp; Product]
+BP_MCP[B&amp;P MCP]
+BP_Service[B&amp;P Service<br/>ReAct + ToT + Auto-RAG]
+BP_ToT[/ToT loop<br/>chunking strategy/]
+E_DS[(Embeddings<br/>Database)]
+BP_MCP --- BP_Service
+BP_Service --- BP_ToT
+BP_Service --- E_DS
+end
 
-    subgraph SD [System Design]
-        SD_MCP[SD MCP]
-        SD_Service[SD Service<br/>ReAct + ToT]
-        SD_ToT[/ToT loop<br/>dependency graph/]
-        MON_MCP[Monitoring MCP]
-        SD_MCP --- SD_Service
-        SD_Service --- SD_ToT
-        SD_ToT --- MON_MCP
-        SD_Service --- MON_MCP
-    end
+subgraph SD [System Design]
+SD_MCP[SD MCP]
+SD_Service[SD Service<br/>ReAct + ToT]
+SD_ToT[/ToT loop<br/>dependency graph/]
+MON_MCP[Monitoring MCP]
+SD_MCP --- SD_Service
+SD_Service --- SD_ToT
+SD_ToT --- MON_MCP
+SD_Service --- MON_MCP
+end
 
-    Portal --- OC_Service
-    Portal --- GH
-    Trigger --- OC_Service
-    GH --- Trigger
-    OC_Service --- LLM
-    OC_Service --- BP_MCP
-    OC_Service --- SD_MCP
-    BP_Service --- LLM
-    BP_ToT --- LLM
-    BP_Service --- SD_MCP
-    BP_Service --- GH_MCP
-    SD_Service --- LLM
-    SD_ToT --- LLM
-    SD_Service --- BP_MCP
-    SD_Service --- GH_MCP
-    GH_MCP --- GH
+Portal --- OC_Service
+Portal --- GH
+Trigger --- OC_Service
+GH --- Trigger
+OC_Service --- LLM
+OC_Service --- BP_MCP
+OC_Service --- SD_MCP
+BP_Service --- LLM
+BP_ToT --- LLM
+BP_Service --- SD_MCP
+BP_Service --- GH_MCP
+SD_Service --- LLM
+SD_ToT --- LLM
+SD_Service --- BP_MCP
+SD_Service --- GH_MCP
+GH_MCP --- GH
 
-    classDef oc fill:#E3F2FD,stroke:#1565C0,color:#0D47A1
-    classDef bp fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
-    classDef sd fill:#FFF3E0,stroke:#EF6C00,color:#E65100
-    classDef tot fill:#FCE4EC,stroke:#AD1457,color:#880E4F
-    classDef docs fill:#F3E5F5,stroke:#6A1B9A,color:#4A148C
-    classDef portal fill:#FFF9C4,stroke:#F57F17,color:#E65100
-    classDef trigger fill:#FFEBEE,stroke:#C62828,color:#B71C1C
-    class OC oc
-    class BP bp
-    class SD sd
-    class BP_ToT,SD_ToT tot
-    class OC_DS docs
-    class Portal portal
-    class Trigger trigger
+classDef oc fill: #E3F2FD, stroke: #1565C0, color:#0D47A1
+classDef bp fill: #E8F5E9, stroke:#2E7D32, color: #1B5E20
+classDef sd fill:#FFF3E0, stroke: #EF6C00, color: #E65100
+classDef tot fill: #FCE4EC, stroke: #AD1457,color: #880E4F
+classDef docs fill: #F3E5F5,stroke: #6A1B9A, color: #4A148C
+classDef portal fill: #FFF9C4, stroke: #F57F17, color:#E65100
+classDef trigger fill: #FFEBEE, stroke:#C62828, color: #B71C1C
+class OC oc
+class BP bp
+class SD sd
+class BP_ToT, SD_ToT tot
+class OC_DS docs
+class Portal portal
+class Trigger trigger
 ```
 
 > **Diagram simplification** — the **BP↔SD cross-reference** is implemented as relative Markdown links inside
 > the GitHub repo, so it lives in the `GH` node rather than as a runtime edge.
 
-- The **"Service"** component of each agent contains the reasoning loop logic defined in [Section 3](PROJECT.md#3-proposed-reasoning-loop-module-2) (Module 2).
+- The **"Service"** component of each agent contains the reasoning loop logic defined
+  in [Section 3](PROJECT.md#3-proposed-reasoning-loop-module-2) (Module 2).
 - The **Documentation Portal** is the only user-facing component. It (a) renders the BP and SD pages directly
   from GitHub, (b) hosts a **chatbot** for users to query the agent and propose improvements, routed to the
   **Orchestrator Service**, and (c) provides the **SME answer UI** described in [Section 9.5](#95-sme-interaction).
@@ -177,22 +186,27 @@ flowchart LR
   with URI, owning agent, last update, source documents) and a **pending SME questions** queue used by the
   Portal's SME UI.
 - The **B&P Service** runs a **ReAct + ToT + Auto-RAG** loop. The ToT sub-routine selects the best chunking
-  strategy per document during indexing ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 1); the Auto-RAG loop ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)) handles
+  strategy per document during indexing ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 1); the
+  Auto-RAG loop ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)) handles
   query-time retrieval. It owns the **B&P pages** in GitHub and embeds cross-references to SD pages for every
   service mentioned in a feature description.
 - The **SD Service** runs a **ReAct + ToT** loop. The ToT sub-routine infers dependency graphs at indexing time
-  using the **Monitoring MCP** as part of the evaluator ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 3). It owns the **SD pages** in
+  using the **Monitoring MCP** as part of the evaluator ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project),
+  use case 3). It owns the **SD pages** in
   GitHub and embeds cross-references to B&P pages for every product served by a given service or endpoint.
 - **Single storage** — all generated documentation (BP and SD) lives in the same GitHub repo as the source
-  code. They are different folders (`/bp/` and `/sd/` for the POC, see [Section 8.3](#83-considerations-for-the-poc)); cross-references are
+  code. They are different folders (`/bp/` and `/sd/` for the POC, see [Section 8.3](#83-considerations-for-the-poc));
+  cross-references are
   plain relative Markdown links. The Portal reads these folders directly to render the docs; agents read and
   write through the **GitHub MCP**.
 - **Continuously updated, not read-only** — on every refresh cycle the owning agent: (a) creates pages for newly
   discovered projects/services, (b) refreshes existing pages whose source code or input docs have drifted,
   (c) re-validates cross-references and downgrades broken links to "follow-up", (d) ingests new SME responses
   delivered via the Portal. Refreshes are kicked off by the **Update Trigger**; on each refresh the B&P agent
-  re-runs its indexing pipeline ([Section 6](PROJECT.md#6-retrieval-design--rag-module-3)) so the **Embeddings Database** stays in sync with the B&P pages.
-  The "read-only" principle from [Section 1.4](PROJECT.md#14-principles-for-our-agent) applies only to the *external systems* the agent inspects — the
+  re-runs its indexing pipeline ([Section 6](PROJECT.md#6-retrieval-design--rag-module-3)) so the **Embeddings Database
+  ** stays in sync with the B&P pages.
+  The "read-only" principle from [Section 1.4](PROJECT.md#14-principles-for-our-agent) applies only to the *external
+  systems* the agent inspects — the
   agent's own documentation output is in constant flux, version-controlled by Git.
 - **Update Trigger** — drives the continuous half of the system. It watches GitHub for changes and/or fires
   on a schedule, then emits refresh requests to the Orchestrator. The orchestrator dispatches per-affected-page
@@ -210,7 +224,8 @@ flowchart LR
 
 - For the POC we'll leave out the **Monitoring MCP** as input for the SD agent. Without it, the SD ToT loop will fall
   back to code references and existing documentation as the only evaluator signals.
-- For the POC the ToT loops will run with **B=2–3** and **D=2–3** ([Section 7.4](PROJECT.md#74-search-strategy)) to bound the number of LLM calls per loop.
+- For the POC the ToT loops will run with **B=2–3** and **D=2–3** ([Section 7.4](PROJECT.md#74-search-strategy)) to
+  bound the number of LLM calls per loop.
 - For the POC the B&P and SD documentation can share **a single GitHub repo** with two top-level folders
   (`/bp/` and `/sd/`) — easier link resolution and a single PR review surface. Splitting into two repos is a later
   optimization if access control becomes an issue.
@@ -239,7 +254,8 @@ Both the **B&P** and **SD** services run in two modes against the same LangGraph
   pipeline.
 - **Query mode** — the agent answers an on-demand question coming through the **Documentation Portal** (a
   user via the chatbot, or an SME through the SME UI). For B&P this is the **Autonomous RAG** loop in
-  [Section 9.3.1](#931-autonomous-rag-architecture-query-time); for SD it is a shorter graph that reads the pre-built doc and falls back to live code
+  [Section 9.3.1](#931-autonomous-rag-architecture-query-time); for SD it is a shorter graph that reads the pre-built
+  doc and falls back to live code
   analysis when needed.
 
 Both modes share the same MCPs, the same LLM, and the same doc stores. The difference is the entry point
@@ -253,7 +269,8 @@ operating mode ([Section 9.1](#91-two-operating-modes)).
 **Background mode** — for each refresh task the graph walks the affected service end-to-end. It pulls source
 code via the **GitHub MCP**, runs plain code analysis (AST + regex) augmented by an LLM pass for the prose
 around each endpoint, optionally verifies inferred call patterns against telemetry through the **Monitoring
-MCP** when wired in, runs the **ToT loop** ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 3) to pick the best dependency graph
+MCP** when wired in, runs the **ToT loop** ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 3) to
+pick the best dependency graph
 among several candidates, calls the **B&P MCP** to resolve cross-references, and writes the resulting page
 as Markdown into the **SD pages** in GitHub. The orchestrator's `doc index` records the new revision so
 the next refresh knows what changed.
@@ -280,14 +297,12 @@ whether the existing page covers the question or focused code analysis is needed
 flowchart LR
     Trig([Update Trigger]) --> Pull[pull source<br/>via GitHub MCP]
     Port([Portal query]) --> Read[read SD page]
-
     Pull --> AC[analyze_code]
     AC --> Tele[verify telemetry<br/>via Monitoring MCP]
     Tele --> ToT[ToT: dep graph]
     ToT --> XR[resolve_bp_links<br/>via BP MCP]
     XR --> Write[write SD doc]
     Write --> Done([SD doc updated])
-
     Read --> Need{page covers<br/>question?}
     Need -->|yes| Compose[compose answer<br/>+ citations]
     Need -->|no| ACFocus[analyze_code<br/>focused]
@@ -295,15 +310,14 @@ flowchart LR
     Compose --> Conf{confident?}
     Conf -->|no| SME[escalate to SME]
     Conf -->|yes| Out([answer to Portal])
-
-    classDef node fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
-    classDef decision fill:#FFF3E0,stroke:#EF6C00,color:#E65100
-    classDef fallback fill:#FCE4EC,stroke:#AD1457,color:#880E4F
-    classDef portal fill:#FFF9C4,stroke:#F57F17,color:#E65100
-    class Pull,AC,Tele,ToT,XR,Write,Read,ACFocus,Compose node
-    class Need,Conf decision
+    classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+    classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
+    classDef fallback fill: #FCE4EC, stroke: #AD1457, color: #880E4F
+    classDef portal fill: #FFF9C4, stroke: #F57F17, color: #E65100
+    class Pull, AC, Tele, ToT, XR, Write, Read, ACFocus, Compose node
+    class Need, Conf decision
     class SME fallback
-    class Trig,Port,Done,Out portal
+    class Trig, Port, Done, Out portal
 ```
 
 #### 9.2.1 analyze_code
@@ -368,7 +382,8 @@ node in the SD graph (`verify_telemetry`, `ToT dep graph`, `resolve_bp_links`, `
 
 #### 9.2.2 verify_telemetry
 
-When the **Monitoring MCP** is wired in (out of POC scope per [Section 8.3](#83-considerations-for-the-poc)), this node cross-checks
+When the **Monitoring MCP** is wired in (out of POC scope per [Section 8.3](#83-considerations-for-the-poc)), this node
+cross-checks
 `analyze_code`'s output against observed traffic. For each inferred endpoint, it queries the MCP for
 spans and metrics matching the route — endpoints with no telemetry get flagged as candidates for
 deprecation. For each inferred downstream call, it verifies that traces actually show calls to the named
@@ -401,17 +416,20 @@ If no candidate clears the threshold, the highest-scoring graph is kept and flag
 ### 9.3 B&P Service design
 
 The B&P agent is also one LangGraph state graph, with an extra responsibility on top of the indexing
-pipeline from [Section 6](PROJECT.md#6-retrieval-design--rag-module-3): every page it produces or consumes needs to **resolve into the SD documentation**
+pipeline from [Section 6](PROJECT.md#6-retrieval-design--rag-module-3): every page it produces or consumes needs to *
+*resolve into the SD documentation**
 so that a B&P page about a product links to the services that implement it.
 
 **Background mode** — the agent ingests input documents (org docs from the Git repo for the POC), runs the
-**ToT chunking-strategy loop** ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 1) per document, writes embeddings into the
+**ToT chunking-strategy loop** ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 1) per document,
+writes embeddings into the
 **Embeddings Database**, and produces the corresponding B&P page. Right before writing, a `resolve_sd_links`
 node calls the **SD MCP** to enumerate the services that back the product or feature described on the page;
 the resulting links are inlined as relative Markdown links to the SD pages. Stale links surface as
 follow-up tasks rather than silent rot — the next refresh re-validates them.
 
-**Query mode** — incoming questions are answered by the **Autonomous RAG** loop ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)). When the
+**Query mode** — incoming questions are answered by the **Autonomous RAG**
+loop ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)). When the
 loop references a service in its answer, the same `resolve_sd_links` node runs to resolve the reference at
 answer time, so the user sees an up-to-date link even if the persisted page is briefly stale. If the loop
 exhausts its rewrite budget, it escalates through the SME flow ([Section 9.5](#95-sme-interaction)).
@@ -433,26 +451,24 @@ retrieve → grade → rewrite` cycle.
 flowchart LR
     Trig([Update Trigger]) --> Ingest[ingest input docs<br/>via GitHub MCP]
     Port([Portal query]) --> Auto[Auto-RAG loop]
-
     Ingest --> ToT[ToT: chunking strategy]
     ToT --> Embed[embed into<br/>Embeddings DB]
     Embed --> XR1[resolve_sd_links<br/>via SD MCP]
     XR1 --> Write[write BP doc]
     Write --> Done([BP doc updated])
-
     Auto --> XR2[resolve_sd_links<br/>via SD MCP]
     XR2 --> Compose[compose answer<br/>+ inline links]
     Compose --> Out([answer to Portal])
-
-    classDef node fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
-    classDef portal fill:#FFF9C4,stroke:#F57F17,color:#E65100
-    class Ingest,ToT,Embed,XR1,Write,Auto,XR2,Compose node
-    class Trig,Port,Done,Out portal
+    classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+    classDef portal fill: #FFF9C4, stroke: #F57F17, color: #E65100
+    class Ingest, ToT, Embed, XR1, Write, Auto, XR2, Compose node
+    class Trig, Port, Done, Out portal
 ```
 
 #### 9.3.1 Autonomous RAG architecture (query time)
 
-[Sections 6.1–6.4](PROJECT.md#6-retrieval-design--rag-module-3) describe the **indexing-time** pipeline. At **query time** we wrap retrieval in an **Autonomous
+[Sections 6.1–6.4](PROJECT.md#6-retrieval-design--rag-module-3) describe the **indexing-time** pipeline. At **query time
+** we wrap retrieval in an **Autonomous
 RAG** loop so the B&P agent can self-correct when retrieval is weak instead of returning a low-confidence answer
 silently. The loop has four nodes — **decide → retrieve → grade → rewrite** — wired as a LangGraph `StateGraph`,
 same harness style as the ToT loops ([Section 7.5](PROJECT.md#75-mapping-tot-roles-to-tools)).
@@ -461,7 +477,8 @@ The nodes:
 
 1. **Decision (router)** — classifies the query into `{no_retrieval, b&p_docs, source_docs, both}`. Some questions
    are answered from static context or by deferring to SD via the SD MCP, and skip retrieval.
-2. **Retrieval** — similarity search against the chosen embedding view ([Section 6.3](PROJECT.md#63-for-indexing-each-document)). K is small (2–5) since we
+2. **Retrieval** — similarity search against the chosen embedding
+   view ([Section 6.3](PROJECT.md#63-for-indexing-each-document)). K is small (2–5) since we
    pull the **whole document** into context once it has been selected.
 3. **Grader** — an LLM scores each retrieved document 0–3. If all are below threshold, the loop goes to the
    rewriter; otherwise the survivors go to answer generation, and we run a second grading pass for **faithfulness**
@@ -471,16 +488,19 @@ The nodes:
 
 Loop control and failure modes:
 
-- After R rewrites, fall back to (a) escalate to an SME ([Section 9.5](#95-sme-interaction)) or (b) return a low-confidence answer with
+- After R rewrites, fall back to (a) escalate to an SME ([Section 9.5](#95-sme-interaction)) or (b) return a
+  low-confidence answer with
   the closest matches. Which fallback applies is the open question in [Section 6.5](PROJECT.md#65-open-questions).
 - If the post-generation faithfulness check fails, trigger one rewrite cycle on the unsupported claims, then fall
   back if it still fails.
 - If the same document repeatedly survives retrieval but fails the grader, the orchestrator flags it for re-indexing
-  with a different chunking strategy (the ToT use case 1 from [Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project)) — closing the loop between query-time
+  with a different chunking strategy (the ToT use case 1
+  from [Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project)) — closing the loop between query-time
   and indexing-time decisions.
 - Cache `(query → graded retrieval)` for the lifetime of a single agent run.
 
-The loop lives inside the **B&P Service** ([Section 8](#8-high-level-architecture-module-5)), reading from the **Embeddings Database** and writing back the
+The loop lives inside the **B&P Service** ([Section 8](#8-high-level-architecture-module-5)), reading from the *
+*Embeddings Database** and writing back the
 index-quality signals above. The router and rewriter can become ToT decision points later if their single-pass calls
 underperform; for the POC we keep them single-pass.
 
@@ -499,16 +519,15 @@ flowchart LR
     CF -->|yes| A([Answer])
     CF -->|no, retry left| RW
     CF -->|no, budget exhausted| FB
-    FB -->|low-confidence answer<br/>+ closest matches| A
+    FB -->|low - confidence answer<br/>+ closest matches| A
     FB -->|ask SME via Portal| Portal([Documentation<br/>Portal])
-    Portal -.->|reply ingested as<br/>new BP doc, re-indexed| R
-
-    classDef node fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
-    classDef decision fill:#FFF3E0,stroke:#EF6C00,color:#E65100
-    classDef fallback fill:#FCE4EC,stroke:#AD1457,color:#880E4F
-    classDef portal fill:#FFF9C4,stroke:#F57F17,color:#E65100
-    class R,RW,Gen node
-    class D,G,CF decision
+    Portal -.->|reply ingested as<br/>new BP doc, re - indexed| R
+    classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+    classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
+    classDef fallback fill: #FCE4EC, stroke: #AD1457, color: #880E4F
+    classDef portal fill: #FFF9C4, stroke: #F57F17, color: #E65100
+    class R, RW, Gen node
+    class D, G, CF decision
     class FB fallback
     class Portal portal
 ```
@@ -524,7 +543,8 @@ MCPs (Confluence, Slack, etc.) without changing this node's contract.
 
 #### 9.3.3 ToT: chunking strategy
 
-For each new or changed document, the agent picks a chunking strategy from the candidates in [Section 6.2](PROJECT.md#62-chunking-strategies)
+For each new or changed document, the agent picks a chunking strategy from the candidates
+in [Section 6.2](PROJECT.md#62-chunking-strategies)
 (per-paragraph, per-section, per-N-chars, summary-only, hybrid) using the ToT loop. The steps:
 
 1. **Generate** — emit K=4 candidate strategies for the document (e.g. per-paragraph at 800 chars,
@@ -594,7 +614,8 @@ but preserve ordering per page so cross-references stay consistent within a sing
 ### 9.5 SME interaction
 
 When the loop in 9.3.1 exhausts its rewrite budget — or the faithfulness check fails repeatedly — it escalates to a
-**subject matter expert** through the **Documentation Portal** ([Section 8](#8-high-level-architecture-module-5)). The goal is to enrich the knowledge
+**subject matter expert** through the **Documentation Portal** ([Section 8](#8-high-level-architecture-module-5)). The
+goal is to enrich the knowledge
 base, not to block the user.
 
 The flow is async:
@@ -616,29 +637,30 @@ sequenceDiagram
     participant Docs as BP Documentation
     participant E as Embeddings DB
     actor SME
-
-    User->>Portal: Ask question
-    Portal->>OC: Forward query
-    OC->>BP: Delegate via BP MCP
+    User ->> Portal: Ask question
+    Portal ->> OC: Forward query
+    OC ->> BP: Delegate via BP MCP
     Note over BP: Auto-RAG loop:<br/>decide → retrieve → grade → rewrite<br/>Rewrite budget exhausted
-    BP-->>OC: Low-confidence answer<br/>+ SME escalation
-    OC->>OC: Queue in pending SME questions<br/>resolve SME from registry
-    OC-->>Portal: Low-confidence answer<br/>(annotated "asked SME X")
-    Portal-->>User: Show low-confidence answer
-    Portal-->>SME: Surface pending question
-    SME->>Portal: Reply with answer
-    Portal->>OC: Forward SME reply
-    OC->>Docs: Persist as new BP document
-    OC->>BP: Re-index this document
-    BP->>E: Refresh embeddings
-    OC->>OC: Remove from pending queue
-    Note over User,SME: Next query on the same topic<br/>now hits an enriched, grounded retrieval
+    BP -->> OC: Low-confidence answer<br/>+ SME escalation
+    OC ->> OC: Queue in pending SME questions<br/>resolve SME from registry
+    OC -->> Portal: Low-confidence answer<br/>(annotated "asked SME X")
+    Portal -->> User: Show low-confidence answer
+    Portal -->> SME: Surface pending question
+    SME ->> Portal: Reply with answer
+    Portal ->> OC: Forward SME reply
+    OC ->> Docs: Persist as new BP document
+    OC ->> BP: Re-index this document
+    BP ->> E: Refresh embeddings
+    OC ->> OC: Remove from pending queue
+    Note over User, SME: Next query on the same topic<br/>now hits an enriched, grounded retrieval
 ```
 
 The orchestrator deduplicates pending questions per topic so two users hitting the same gap don't both page the
 SME. The Portal looks up the right SME from a registry keyed by project/domain (the "initial list of SMEs" from
-[Section 3.1](PROJECT.md#31-business--product-bp-pov)), with fallback to the next candidate after a timeout (e.g., 24h). The same flow is used by **SD**
-when its ToT gap-reconciliation evaluator can't pick a winner ([Section 7.7](PROJECT.md#77-risk-and-mitigation)'s mitigation).
+[Section 3.1](PROJECT.md#31-business--product-bp-pov)), with fallback to the next candidate after a timeout (e.g., 24h).
+The same flow is used by **SD**
+when its ToT gap-reconciliation evaluator can't pick a winner ([Section 7.7](PROJECT.md#77-risk-and-mitigation)'s
+mitigation).
 
 If the SME's reply disagrees with the retrieved documents, those documents are flagged for refresh — the SME-driven
 counterpart of the index-quality feedback in 9.3.1. If no SME is available for a domain, the orchestrator records the
