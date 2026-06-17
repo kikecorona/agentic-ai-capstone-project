@@ -611,9 +611,13 @@ since there is no domain-specific reasoning.
 **State.** Three persisted blobs (the **datasources inventory**) survive between runs:
 
 - **`doc_index`** — every page produced by B&P or SD, keyed by URI, with `{owning_agent, last_updated,
-  source_documents, content_hash}`.
-- **`pending_sme_questions`** — escalated questions waiting for an SME, keyed by topic, with
-  `{question, originating_query, assigned_sme, posted_at}`.
+  source_documents, content_hash, open_placeholders}`. `open_placeholders` is the list of `question_id`s
+  whose placeholder blocks ([Section 9.5.1](#951-placeholders-and-re-integration)) currently sit in the
+  page; the index uses it to find pages to patch when an SME replies.
+- **`pending_sme_questions`** — escalated questions waiting for an SME, keyed by `question_id`, with
+  `{topic, question, originating_query, originating_pages, placeholder_id, best_guess, retrieval_trail,
+  assigned_sme, posted_at}`. `originating_pages` is the set of B&P/SD page URIs that carry the matching
+  placeholder, so re-integration patches every page that asked the same question — not just the newest one.
 - **`sources_inventory`** — input documents and their last-known hashes; used by B&P's `ingest input
   docs` step and the Trigger's diff calculation.
 
@@ -630,10 +634,16 @@ the loop runs reliably on the local LLM.
    by the `reason` step as the first decision point.
 2. **`dispatch`** — for refresh tasks, fans out one task per affected page to BP_MCP or SD_MCP. For
    Portal queries, picks a single specialist (or both, if the query spans both domains) and forwards.
-3. **`ingest_sme_reply`** — persists the SME's answer as a new B&P document via the BP_MCP, removes
-   the corresponding entry from `pending_sme_questions`, and tells B&P to re-index.
+3. **`ingest_sme_reply`** — the re-integration step ([Section 9.5.1](#951-placeholders-and-re-integration)).
+   Persists the SME's answer as a new B&P document via the BP_MCP, then walks
+   `pending_sme_questions[question_id].originating_pages` and asks the owning specialist to **patch
+   each page** by replacing the placeholder block with the SME's text plus a link to the new doc. Tells
+   B&P to re-index, removes the entry from `pending_sme_questions`, and clears the matching
+   `question_id` from each page's `open_placeholders`.
 4. **`update_index`** — every time a specialist returns a completed page, this node updates the
-   `doc_index` and `sources_inventory`.
+   `doc_index` and `sources_inventory`. When a specialist writes a page that contains placeholder
+   blocks, this node also opens (or updates) the corresponding entries in `pending_sme_questions` so
+   the placeholders and the queue stay in sync.
 
 **Resumability.** Every node persists its state before transitioning; if the orchestrator crashes
 mid-refresh it picks up where it left off on next start. Refresh fan-outs run specialists in parallel
@@ -650,11 +660,16 @@ The flow is async:
 
 1. The fallback emits the question to the orchestrator. The question carries the original user query, the rewrite
    trail, the closest retrieved documents with grader scores, and the agent's best low-confidence guess so the SME
-   can confirm or correct rather than draft from scratch.
+   can confirm or correct rather than draft from scratch. If the question originated from a *background-mode* page
+   build rather than a query (the specialist hit the same gap while writing the page), the specialist also writes a
+   **placeholder block** into the page before returning ([Section 9.5.1](#951-placeholders-and-re-integration)) and
+   sends the resulting `placeholder_id` and page URI along with the escalation.
 2. The user gets the low-confidence answer immediately, annotated with "asked SME X — will refresh once they reply".
-3. The orchestrator queues the question (`pending SME questions` in its inventory) and the Portal surfaces it to
-   the right SME. When the SME replies in the Portal, the orchestrator stores the reply as a new B&P document and
-   triggers re-indexing.
+3. The orchestrator queues the question (`pending_sme_questions` in its inventory, keyed by `question_id`) with the
+   originating page list and surfaces it to the right SME through the Portal. When the SME replies, the orchestrator
+   runs `ingest_sme_reply` ([Section 9.4](#94-orchestrator-service-design)): it persists the reply as a new B&P
+   document, asks the owning specialist to patch every originating page (placeholder block → SME's text + link to
+   the new doc), triggers re-indexing, and clears the queue entry.
 
 ```mermaid
 sequenceDiagram
@@ -662,25 +677,30 @@ sequenceDiagram
     participant Portal as Documentation Portal
     participant OC as Orchestrator
     participant BP as BP Service
-    participant Docs as BP Documentation
+    participant Docs as BP / SD Pages
     participant E as Embeddings DB
     actor SME
     User ->> Portal: Ask question
     Portal ->> OC: Forward query
     OC ->> BP: Delegate via BP MCP
     Note over BP: Auto-RAG loop:<br/>decide → retrieve → grade → rewrite<br/>Rewrite budget exhausted
-    BP -->> OC: Low-confidence answer<br/>+ SME escalation
-    OC ->> OC: Queue in pending SME questions<br/>resolve SME from registry
+    BP -->> OC: Low-confidence answer + escalation<br/>(question_id, best_guess, retrieval_trail)
+    opt question raised during background page build
+        BP ->> Docs: Write placeholder block<br/>(question_id) into originating page
+        Docs -->> BP: Page committed with open_placeholders
+    end
+    OC ->> OC: Queue in pending_sme_questions<br/>resolve SME from registry
     OC -->> Portal: Low-confidence answer<br/>(annotated "asked SME X")
     Portal -->> User: Show low-confidence answer
-    Portal -->> SME: Surface pending question
+    Portal -->> SME: Surface pending question<br/>+ context + best guess
     SME ->> Portal: Reply with answer
     Portal ->> OC: Forward SME reply
     OC ->> Docs: Persist as new BP document
-    OC ->> BP: Re-index this document
+    OC ->> BP: Patch each originating page<br/>(replace placeholder with SME text<br/>+ link to new BP doc)
+    OC ->> BP: Re-index new doc + patched pages
     BP ->> E: Refresh embeddings
-    OC ->> OC: Remove from pending queue
-    Note over User, SME: Next query on the same topic<br/>now hits an enriched, grounded retrieval
+    OC ->> OC: Remove from pending queue<br/>clear open_placeholders
+    Note over User, SME: Next query on the same topic<br/>now hits an enriched, grounded retrieval<br/>and the page no longer shows a gap
 ```
 
 The orchestrator deduplicates pending questions per topic so two users hitting the same gap don't both page the
@@ -693,3 +713,64 @@ mitigation).
 If the SME's reply disagrees with the retrieved documents, those documents are flagged for refresh — the SME-driven
 counterpart of the index-quality feedback in [Section 9.3.1](#931-autonomous-rag-architecture-query-time). If no SME is available for a domain, the orchestrator records the
 gap in its inventory; it is a knowledge-base coverage problem, not a runtime error.
+
+#### 9.5.1 Placeholders and re-integration
+
+A page is rarely held back because of a single open question — the specialist commits what it knows and
+**marks the gap inline** so readers see where the documentation is incomplete and the system has a hook to patch
+the page once an SME answers. Two mechanisms cover this: a **placeholder block** written into the page at gap
+time, and a **re-integration step** in the orchestrator that replaces the block when the SME's reply lands.
+
+**When a placeholder is written.** A placeholder block is emitted whenever a specialist hits a gap it cannot
+resolve on its own and the resulting question is escalated to an SME via [Section 9.5](#95-sme-interaction). The
+common cases:
+
+- **B&P background mode** — the Auto-RAG loop runs while building or refreshing a page and exhausts its rewrite
+  budget on a sub-question that's necessary for the page (e.g., the canonical owner of a feature flag).
+- **SD background mode** — `analyze_code` tags a route or call as `dynamic` ([Section 9.2.1](#921-analyze_code))
+  or the ToT dep-graph evaluator can't pick a winner ([Section 9.2.3](#923-tot-dep-graph)).
+- **Cross-reference resolution** — `resolve_sd_links` / `resolve_bp_links` can't map a referent and the link
+  would otherwise rot silently.
+
+In all three cases the specialist still writes the page; the placeholder block stands in for the missing prose
+or link.
+
+**Placeholder block format.** A self-contained, machine-locatable Markdown block with HTML-comment fences so
+the patch step can find and replace it deterministically without regex over arbitrary prose:
+
+```markdown
+<!-- SME-PLACEHOLDER:Q-2026-06-17-001 START -->
+> ⏳ **Waiting for SME** — *Topic:* dynamic queue URL resolution
+>
+> *Question:* How is `QUEUE_BASE` resolved per tenant at runtime?
+> *Best guess (low-confidence):* Derived from `config.QUEUE_BASE` plus tenant-id; needs confirmation.
+> *Asked:* @alice on 2026-06-17 · *Status:* pending · *Question ID:* `Q-2026-06-17-001`
+<!-- SME-PLACEHOLDER:Q-2026-06-17-001 END -->
+```
+
+The fenced HTML comments are the contract. Everything between them is human-readable; the `question_id` in the
+fence is what the orchestrator uses to find the block. The page's `open_placeholders` list in the `doc_index`
+mirrors the set of `question_id`s currently fenced inside the file, which lets the orchestrator find every
+page that asked the same question without scanning the repo.
+
+**Re-integration when the SME replies.** The orchestrator's `ingest_sme_reply` node
+([Section 9.4](#94-orchestrator-service-design)) does two writes in order:
+
+1. **New B&P document** — the SME's answer is persisted as a standalone B&P page so the Auto-RAG loop can
+   retrieve it on future queries on the same topic. This is the embedding-side update; without it, the next
+   identical question would re-escalate.
+2. **Patch every originating page** — for each URI in `pending_sme_questions[question_id].originating_pages`,
+   the orchestrator asks the owning specialist (B&P or SD) to replace the fenced placeholder block with the
+   SME's text plus a relative Markdown link to the new B&P document. This is the page-side update; without it,
+   the placeholder rots in the page even though the answer exists.
+
+Both writes are committed in the same Git change so the index update and the page patch land together. After
+the patch, the `question_id` is removed from each page's `open_placeholders` and the entry is cleared from
+`pending_sme_questions`. If a downstream refresh later re-discovers the same gap (e.g., the SME's answer
+became outdated), a new `question_id` is opened and a fresh placeholder block written — the system never
+reuses a closed `question_id`, so the audit trail in Git stays linear.
+
+**Cross-references re-validation.** The same patch step also runs after a refresh that resolves a previously
+missing cross-reference: the placeholder block becomes the resolved relative Markdown link. From the page's
+perspective there's only one mechanism — fenced block in, resolved content out — regardless of whether the
+fix came from an SME or from a successful re-run.
