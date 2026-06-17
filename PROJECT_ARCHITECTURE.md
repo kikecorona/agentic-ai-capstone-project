@@ -2,7 +2,8 @@
 
 Enrique R. Corona Dominguez
 
-> Disclaimer: I wrote this with help from Claude Code, I provided a lot of guidance, suggestions, corrections and for the most part defined the high level architecture and
+> Disclaimer: I wrote this with help from Claude Code, I provided a lot of guidance, suggestions, corrections and for
+> the most part defined the high level architecture and
 > implementation details based on the course lectures.
 
 This document continues from [PROJECT.md](PROJECT.md) (Sections 1–7) and covers the
@@ -14,13 +15,13 @@ main document.
 ## 8. High-Level Architecture (Module 5)
 
 > As stated in [Section 1.3](PROJECT.md#13-proposed-solution), we're implementing a **Research Agent** that
-helps our leadership, developers, and product managers have a complete view of the architecture,
-dependencies, progress, and known gaps of our systems. Modernization efforts in a 20+ year old org stall
-on a single recurring problem: nobody has an accurate, current map of the system. Decisions get made on
-stale or incomplete documentation, dependencies get discovered late, and gap analysis becomes weeks of
-manual archaeology. A Research Agent that **continuously updates and enriches** the org's documentation
-collapses that lead time and gives every team — engineering, product, leadership — a single source of
-truth they can trust.
+> helps our leadership, developers, and product managers have a complete view of the architecture,
+> dependencies, progress, and known gaps of our systems. Modernization efforts in a 20+ year old org stall
+> on a single recurring problem: nobody has an accurate, current map of the system. Decisions get made on
+> stale or incomplete documentation, dependencies get discovered late, and gap analysis becomes weeks of
+> manual archaeology. A Research Agent that **continuously updates and enriches** the org's documentation
+> collapses that lead time and gives every team — engineering, product, leadership — a single source of
+> truth they can trust.
 
 ### 8.1 Roles and responsibilities
 
@@ -125,7 +126,7 @@ retrieval call, no merge step.
 - **Specialist → supervisor** (escalation) — when a specialist can't resolve a question during a
   background page build (RAG_MCP returns `exhausted`, SD code analysis or ToT can't resolve,
   cross-reference unresolvable), it returns an SME-escalation envelope; the orchestrator queues it
-  and surfaces it through the Portal ([Section 9.6](#96-sme-interaction)).
+  and surfaces it through the Portal ([Section 9.6](#96-sme-interaction-module-6)).
 - **Trigger → supervisor → specialists** (refresh fan-out) — the orchestrator forwards the change event
   to the specialist(s) it concerns (B&P for input-doc paths, SD for source-code paths; both for
   ambiguous events). Each specialist diffs the event against its own sources inventory and doc index,
@@ -151,6 +152,7 @@ flowchart LR
     GH([GitHub<br/>BP docs + SD docs<br/>+ source code])
     GH_MCP[GitHub MCP]
     MON_MCP[Monitoring MCP]
+    OTEL_MCP[OpenTelemetry MCP<br/>audit / runtime monitoring]
 
     subgraph OC [Orchestrator]
         OC_Service[Orchestrator Service<br/>ReAct]
@@ -207,25 +209,29 @@ SD_ToT --- MON_MCP
 RAG_Service --- LLM
 RAG_ToT --- LLM
 GH_MCP --- GH
+OC_Service --- OTEL_MCP
+BP_Service --- OTEL_MCP
+SD_Service --- OTEL_MCP
+RAG_Service --- OTEL_MCP
 
-classDef oc fill: #E3F2FD, stroke: #1565C0, color:#0D47A1
-classDef bp fill: #E8F5E9, stroke:#2E7D32, color: #1B5E20
-classDef sd fill:#FFF3E0, stroke: #EF6C00, color: #E65100
+classDef oc fill: #E3F2FD, stroke: #1565C0, color: #0D47A1
+classDef bp fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+classDef sd fill: #FFF3E0, stroke: #EF6C00, color: #E65100
 classDef rag fill: #E0F7FA, stroke: #00838F, color: #006064
 classDef tot fill: #FCE4EC, stroke: #AD1457,color: #880E4F
 classDef docs fill: #F3E5F5,stroke: #6A1B9A, color: #4A148C
 classDef shared fill: #E0F7FA, stroke: #00838F, color: #006064
-classDef portal fill: #FFF9C4, stroke: #F57F17, color:#E65100
-classDef trigger fill: #FFEBEE, stroke:#C62828, color: #B71C1C
+classDef portal fill: #FFF9C4, stroke: #F57F17, color: #E65100
+classDef trigger fill: #FFEBEE, stroke: #C62828, color: #B71C1C
 class OC oc
-    class BP bp
-    class SD sd
-    class RAG rag
-    class SD_ToT,RAG_ToT tot
-    class OC_DS,BP_DS,SD_DS docs
-    class E_DS shared
-    class Portal portal
-    class Trigger trigger
+class BP bp
+class SD sd
+class RAG rag
+class SD_ToT,RAG_ToT tot
+class OC_DS,BP_DS,SD_DS docs
+class E_DS shared
+class Portal portal
+class Trigger trigger
 ```
 
 > **Diagram simplification** — the **BP↔SD cross-reference** is implemented as relative Markdown links inside
@@ -235,13 +241,13 @@ class OC oc
   in [Section 3](PROJECT.md#3-proposed-reasoning-loop-module-2) (Module 2).
 - The **Documentation Portal** is the only user-facing component. It renders BP/SD pages from
   GitHub, hosts the chatbot (routed to the Orchestrator), and provides the SME answer UI
-  ([Section 9.6](#96-sme-interaction)).
+  ([Section 9.6](#96-sme-interaction-module-6)).
 - The **Monitoring MCP** is external, alongside the GitHub MCP. SD calls it during code analysis to
   verify inferred call patterns and score ToT dep-graph candidates; future agents can consume it
   without going through SD.
 - **Page storage** — all generated docs live in the same GitHub repo as source code, in
   domain-scoped folders. Cross-references are relative Markdown links; agents read and write
-  through the GitHub MCP. POC folder layout is in [Section 8.4](#84-considerations-for-the-poc).
+  through the GitHub MCP. POC folder layout is in [Section 8.5](#85-considerations-for-the-poc).
 - **Embedding storage** — one shared Embeddings Database, owned by the RAG Service and reached only
   via `RAG_MCP`. Chunks carry a `domain` tag plus source URI, content hash, and chunking-strategy
   metadata, so refresh and invalidation stay per-specialist even though the index is shared.
@@ -253,6 +259,11 @@ class OC oc
 - **Cross-references** — B&P calls `SD_MCP` to resolve "what services serve this product"; SD calls
   `BP_MCP` for the reverse. Both directions are re-validated on each refresh, so stale links become
   follow-up tasks instead of silent rot.
+- **Runtime audit** — every service (Orchestrator, B&P, SD, RAG) emits OpenTelemetry spans for
+  inbound and outbound MCP calls via `OTEL_MCP`. Spans carry the request envelope, response
+  status, and latency. Per-node metrics (escalation rate, grader-fail rate, RAG `exhausted` rate,
+  latency) are derived from the trace stream; see [Section 8.5](#85-considerations-for-the-poc) for
+  the POC implementation.
 
 ### 8.3 Trade-offs and scalability
 
@@ -271,6 +282,17 @@ coordinated deployments — a worse trade for a system meant to evolve.
 graph, so both modes reuse the same domain logic. That keeps the separation of concerns clean and
 keeps fresh answers consistent with the last refresh.
 
+**Autonomy vs. oversight (Module 6).** The agent runs autonomously most of the time — refreshes
+fan out, queries answer back, and Auto-RAG self-corrects within bounds — but every loop in the
+design ends in either a confident answer, a low-confidence answer with closest matches, or a
+human-in-the-loop hand-off (SME escalation in background mode). We deliberately gate human
+attention to the cases where it adds the most value: gaps in source material that the agent
+genuinely cannot resolve from what it has, never user-facing latency. The tradeoff is that
+low-confidence answers sometimes reach users without an SME having signed off; we accept that
+because the alternative — making every uncertain query block on a human — would collapse the
+system's throughput and defeat the "continuously updated" goal from
+[§1.3](PROJECT.md#13-proposed-solution).
+
 **Scalability.** Four properties let the design grow without rework:
 
 - **Parallel refresh fan-out** — the Orchestrator hands out one job per affected page and the
@@ -283,9 +305,79 @@ keeps fresh answers consistent with the last refresh.
 - **Resumable state** — the Orchestrator saves its progress as it goes. If a refresh crashes
   partway, it picks up where it left off instead of restarting from scratch.
 
-### 8.4 Considerations for the POC
+### 8.4 Guardrails (Module 6)
 
-#### 8.4.1 General considerations
+The architecture has several guardrails baked into the structural choices above. This section
+catalogues them explicitly so the safety posture is reviewable, and flags the known gaps that are
+deferred to later phases.
+
+**Built into the design:**
+
+- **Tool access** — MCPs are the only inter-agent interface ([§8.1](#81-roles-and-responsibilities)).
+  Each agent is wired to a fixed set: BP/SD reach the RAG Service, the GitHub MCP, the peer's MCP
+  (relational queries only), and — for SD — the Monitoring MCP. The RAG Service has no GitHub
+  access; the Orchestrator has no embedding-store or source-code access. Adding a tool means
+  changing the wiring, not the prompts.
+- **Cross-domain isolation** — every chunk in the shared Embeddings Database carries a `domain`
+  tag, and the RAG Service trusts the caller's domain claim only on the wired MCP boundary. BP
+  cannot write `domain=sd`; SD cannot write `domain=bp`. Page writes are similarly per-domain
+  through the GitHub MCP.
+- **Loop bounds** — Auto-RAG capped at **R=2** rewrites ([§9.2.1](#921-autonomous-rag-loop)); ToT
+  loops capped at **B=2–3, D=2–3** ([§7.4](PROJECT.md#74-search-strategy)). After the cap, the
+  loop returns `low_confidence` / `exhausted` rather than recursing further.
+- **Output validation** — every Auto-RAG answer goes through a grader and a faithfulness re-grade
+  ([§9.2.1](#921-autonomous-rag-loop)) before reaching the user; failed grades trigger a rewrite or
+  fall back to low-confidence with closest matches.
+- **Source verification** — answers carry retrieval trails and grader scores; cross-references are
+  re-validated each refresh and degrade to follow-up tasks rather than silent rot
+  ([§8.2](#82-high-level-architecture-diagram) cross-references bullet); SME re-integration grounds
+  answers in human-verified content ([§9.6.1](#961-placeholders-and-re-integration)).
+- **Escalation rules** — SME escalation is **background-only**: a user query can never page an SME
+  ([§9.6](#96-sme-interaction-module-6)). Escalations are deduped by topic before reaching the SME registry.
+- **Read-only on external systems** — the [§1.4](PROJECT.md#14-principles-for-our-agent)
+  principle: the agent only writes to the BP/SD pages
+  it owns and to its own embedding store. Source code, telemetry, and any future external sources
+  (Slack, Confluence, Quip) are read-only.
+- **Audit trail** — two complementary mechanisms: every page write goes through the GitHub MCP,
+  so Git history is the durable per-page audit log; every inbound and outbound MCP call is an
+  OpenTelemetry span via `OTEL_MCP` ([§8.2](#82-high-level-architecture-diagram)), so the runtime
+  call graph is independently observable. Placeholder blocks include the `question_id` so
+  SME-driven changes are traceable across both.
+- **Runtime monitoring** — `OTEL_MCP` collects spans for every service-to-service call; per-node
+  metrics (escalation rate, grader-fail rate, latency per node, RAG `exhausted` rate) and the
+  index-quality flags from RAG retrieval are derived from the trace stream. POC implementation is
+  in [Section 8.5](#85-considerations-for-the-poc).
+
+**Known gaps (deferred or flagged for later phases):**
+
+- **Prompt injection** — input docs from Git could embed adversarial instructions. No sanitization
+  pass on ingest yet; for the POC the input set is hand-checked org docs, so the risk is low.
+- **PII / sensitive content** — [§1.4](PROJECT.md#14-principles-for-our-agent) forbids PII but
+  enforcement today is policy, not technical. A redaction pass on ingest is a candidate for the
+  next phase.
+- **Global LLM / cost budget** — per-loop bounds exist, but no per-request or per-refresh ceiling
+  on total LLM calls. A runaway loop is bounded by the `done` action and resumability, not by an
+  explicit budget.
+- **Output schema validation** — structured outputs (escalation envelope, RAG response, ToT branch
+  scores) follow documented shapes but aren't JSON-schema-validated at the boundary.
+- **SME identity** — the Portal looks up SMEs from a registry; how an SME authenticates when
+  replying is left to the Portal implementation.
+
+**Safety strategy — how the pieces compose.** Guardrails (§8.4), evaluation
+([§9.8](#98-evaluation-strategy-module-6)), and human intervention ([§9.6](#96-sme-interaction-module-6))
+are three layers of one strategy, not three independent features. Guardrails are **preventive** —
+they keep individual loops bounded and isolated, so a single bad call can't cascade across the
+system. Evaluation is **detective** — the OTel trace stream and the offline golden set turn
+runtime behavior into measurable signals (escalation rate, faithfulness pass rate, calibration),
+so regressions surface early instead of silently degrading the docs. Human intervention is
+**corrective** — when the agent genuinely can't resolve something during a background build, it
+hands off to an SME and re-integrates the answer back into the index, closing the loop instead of
+leaving a gap. The three reinforce each other: guardrails make detection meaningful (a faithful
+answer that's also low-confidence is genuinely uncertain, not just sloppy), detection routes the
+right gaps to SMEs, and SME answers feed back into the index so the next round of preventive
+guardrails has better material to work with.
+
+### 8.5 Considerations for the POC
 
 - **Monitoring MCP** is left out — SD's ToT falls back to code references and existing docs as
   evaluator signals.
@@ -294,6 +386,11 @@ keeps fresh answers consistent with the last refresh.
   Service's chunking ToT.
 - **RAG Service** runs in-process with a local ChromaDB instance. Splitting it behind
   `RAG_MCP`-over-HTTP is a later optimization; the contract with B&P/SD doesn't change.
+- **OpenTelemetry MCP** is built for the POC as a thin OTel collector fronted by an MCP. Each
+  service emits spans for inbound and outbound calls (request envelope, response status, latency);
+  the collector persists them locally (file-based or SQLite). Production deployments would swap
+  the collector for a real OTel backend (Tempo, Honeycomb, etc.) without changing the service-side
+  wiring.
 - **Indexed content** is BP input docs and generated SD pages only, not source code. Source-code
   indexing slots in later as another input to `RAG_MCP.index` without changing the topology.
 - **Page storage** — BP and SD share a single GitHub repo with
@@ -305,10 +402,29 @@ keeps fresh answers consistent with the last refresh.
 - **Input sources** — both inputs and outputs live in Git. Slack, Confluence, email and Quip
   ingestion are deferred to later phases; they would be added as new MCPs next to the GitHub MCP
   without changing the rest of the topology.
+- **Evaluation (Module 6)**
+  - **In scope for the POC** — Live signals are read off the trace stream and the doc indexes from
+    day one with no extra code beyond a dashboard. Deeper evaluation runs against a small,
+    manually-curated golden set on a weekly cadence; the LLM-as-judge uses the same `llama3.1:8b` as
+    the agent itself, with the option to swap to a stronger judge (`llama3.1:70b` or `mixtral:8x7b`)
+    for the periodic human-recalibration cycles. Calibration and hallucination checks start as manual
+    spot-checks and become automated as the harness matures.
+  - **Out of scope for the POC** — External adversarial inputs (prompt injection, crafted documents) and PII
+    leakage rates are not measured — they are policy-deferred per the
+    [§8.4 known gaps](#84-guardrails-module-6). Adding them later is a harness change, not a
+    metric-strategy change.
+- **Deploy safety (Module 6)** — The guardrails in [§8.4](#84-guardrails-module-6) (loop bounds,
+  output validation, escalation rules, cross-domain isolation, OTel-based runtime monitoring) give
+  us enough confidence to deploy and observe in real time rather than flying blind. And because
+  every page write goes through Git via the GitHub MCP, every deploy comes with a free rollback
+  story: a regression in BP/SD content reverts cleanly with `git revert` on the affected files,
+  and re-indexing falls out of the next refresh against the rolled-back source. The combination —
+  preventive guardrails + observable runtime + Git-backed rollback — is what makes the design
+  deploy-ready beyond just functionally correct.
 
-#### 8.4.2 LLM strategy
+### 8.6 LLM strategy
 
-For the POC, every LLM call across §9 — Auto-RAG router/grader/rewriter, orchestrator's `reason`
+For the POC, every LLM call across [§9](#9-low-level-design) — Auto-RAG router/grader/rewriter, orchestrator's `reason`
 step, ToT probe-question generator, ToT critics, SD's `analyze_code` LLM augment, faithfulness
 re-grade — runs against the same `llama3.1:8b` instance. One model, one set of prompts, one memory
 profile.
@@ -444,7 +560,7 @@ Loop control and failure modes:
   loop returns `status=exhausted` with no answer. The decision of what to do with each status is
   the caller's: B&P/SD in **query mode** turn `low_confidence`/`exhausted` into a low-confidence
   answer to the user; in **background mode** they turn it into an SME escalation
-  ([Section 9.6](#96-sme-interaction)) and write a placeholder block
+  ([Section 9.6](#96-sme-interaction-module-6)) and write a placeholder block
   ([Section 9.6.1](#961-placeholders-and-re-integration)).
 - If the post-generation faithfulness check fails, trigger one rewrite cycle on the unsupported
   claims; if it still fails after the cycle, downgrade `status` to `low_confidence` and return.
@@ -476,8 +592,8 @@ flowchart LR
     FB --> Out
     classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
     classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
-    class R,RW,Gen,OK,FB node
-    class D,G,CF decision
+class R,RW,Gen,OK,FB node
+class D,G,CF decision
 ```
 
 #### 9.2.2 ToT: chunking strategy
@@ -540,7 +656,7 @@ focused `analyze_code` pass runs on a targeted subset of files (the file backing
 endpoint, taken from the response's `sources`) and feeds the composer. The user always gets an
 answer back: if the RAG response and focused analysis both leave the response low-confidence, it is
 returned as such with closest-match citations and the analyzer's notes. Query mode never escalates
-to an SME — that flow is reserved for background builds (see [Section 9.6](#96-sme-interaction)).
+to an SME — that flow is reserved for background builds (see [Section 9.6](#96-sme-interaction-module-6)).
 
 Reusing the same code-analysis node across both modes keeps the live answers consistent with what we
 documented during the last refresh — they come from the same logic. Delegating retrieval to the same
@@ -577,9 +693,9 @@ flowchart LR
     classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
     classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
     classDef portal fill: #FFF9C4, stroke: #F57F17, color: #E65100
-    class Pull,AC,Tele,ToT,XR,Write,Index,Retrieve,ACFocus,Compose node
-    class Cover decision
-    class Trig,Port,Done,Out portal
+class Pull,AC,Tele,ToT,XR,Write,Index,Retrieve,ACFocus,Compose node
+class Cover decision
+class Trig,Port,Done,Out portal
 ```
 
 #### 9.3.1 analyze_code
@@ -644,7 +760,7 @@ node in the SD graph (`verify_telemetry`, `ToT dep graph`, `resolve_bp_links`, `
 
 #### 9.3.2 verify_telemetry
 
-When the **Monitoring MCP** is wired in (out of POC scope per [Section 8.4](#84-considerations-for-the-poc)), this node
+When the **Monitoring MCP** is wired in (out of POC scope per [Section 8.5](#85-considerations-for-the-poc)), this node
 cross-checks
 `analyze_code`'s output against observed traffic. For each inferred endpoint, it queries the MCP for
 spans and metrics matching the route — endpoints with no telemetry get flagged as candidates for
@@ -704,7 +820,7 @@ without any merge step on B&P's side. When the response references a service in 
 same `resolve_sd_links` node runs to resolve the reference at answer time, so the user sees an
 up-to-date link even if the persisted page is briefly stale. If the response comes back as
 `low_confidence` or `exhausted`, the user gets a low-confidence answer with closest-match
-citations — query mode does not escalate to an SME (see [Section 9.6](#96-sme-interaction)).
+citations — query mode does not escalate to an SME (see [Section 9.6](#96-sme-interaction-module-6)).
 
 The cross-referencing direction is symmetric with SD: B&P calls **SD MCP** to resolve "what
 services serve this product"; SD calls **B&P MCP** to resolve "what products depend on this
@@ -733,8 +849,8 @@ flowchart LR
     Compose --> Out([answer to Portal<br/>low-confidence flagged if uncertain])
     classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
     classDef portal fill: #FFF9C4, stroke: #F57F17, color: #E65100
-    class Ingest,Index,XR1,Write,Retrieve,XR2,Compose node
-    class Trig,Port,Done,Out portal
+class Ingest,Index,XR1,Write,Retrieve,XR2,Compose node
+class Trig,Port,Done,Out portal
 ```
 
 ### 9.5 Orchestrator Service design
@@ -768,7 +884,7 @@ since there is no domain-specific reasoning.
   dedup happens across both domains and the SME registry is global.
 
 The **doc index** and **sources inventory** are *not* held by the orchestrator. Each specialist owns
-its own copy keyed to its domain (see §8.1). The orchestrator can ask a specialist for that
+its own copy keyed to its domain (see [§8.1](#81-roles-and-responsibilities)). The orchestrator can ask a specialist for that
 information via its MCP when it needs it (e.g., the placeholder-patch step queries the owning
 specialist for the page's current content), but it never caches a global view.
 
@@ -805,7 +921,7 @@ the loop runs reliably on the local LLM.
 mid-refresh it picks up where it left off on next start. Refresh fan-outs run specialists in parallel
 but preserve ordering per page so cross-references stay consistent within a single cycle.
 
-### 9.6 SME interaction
+### 9.6 SME interaction (Module 6)
 
 When a specialist hits an unresolvable gap during a **background page build** — Auto-RAG exhausts its
 rewrite budget on a sub-question necessary for the page, code analysis tags a route as `dynamic`, the
@@ -840,7 +956,6 @@ sequenceDiagram
     participant E as Shared Embeddings DB
     participant Portal as Documentation Portal
     actor SME
-
     Trig ->> OC: Refresh event
     OC ->> Spec: Dispatch refresh task
     Note over Spec: Background build hits an<br/>unresolvable gap (Auto-RAG rewrites<br/>exhausted, dep-graph tie, dynamic<br/>route, cross-ref unresolved)
@@ -878,7 +993,7 @@ time, and a **re-integration step** in the orchestrator that replaces the block 
 
 **When a placeholder is written.** A placeholder block is emitted whenever a specialist hits a gap it cannot
 resolve on its own during a background page build and the resulting question is escalated to an SME via
-[Section 9.6](#96-sme-interaction). The common cases:
+[Section 9.6](#96-sme-interaction-module-6). The common cases:
 
 - **Background-mode RAG retrieval** — while building or refreshing a page, the specialist calls
   `RAG_MCP.retrieve(query, domain_filter, mode=background)` ([Section 9.2.1](#921-autonomous-rag-loop))
@@ -936,3 +1051,112 @@ reuses a closed `question_id`, so the audit trail in Git stays linear.
 missing cross-reference: the placeholder block becomes the resolved relative Markdown link. From the page's
 perspective there's only one mechanism — fenced block in, resolved content out — regardless of whether the
 fix came from an SME or from a successful re-run.
+
+### 9.7 Audit and observability (Module 6)
+
+Every service in the architecture emits **OpenTelemetry spans** for inbound and outbound MCP calls
+through `OTEL_MCP` ([Section 8.2](#82-high-level-architecture-diagram)). The spans form the runtime
+audit log and the source of every per-node metric the system tracks. Span emission is a
+cross-cutting concern: each `act` step in a service's ReAct loop is wrapped automatically, so the
+per-service designs in [§9.2](#92-rag-service-design)–[§9.5](#95-orchestrator-service-design) don't need to thread it explicitly.
+
+**Span boundary.** A span opens on every inbound MCP method and on every outbound MCP call. By
+service:
+
+- **Orchestrator** ([§9.5](#95-orchestrator-service-design)) — inbound: `route`; outbound:
+  `dispatch_to_bp/sd/both`, `ingest_sme_reply`, `ack_completion`.
+- **B&P Service** ([§9.4](#94-bp-service-design)) — inbound: each `BP_MCP` method; outbound:
+  `RAG_MCP.retrieve/index`, `SD_MCP.*`, `GH_MCP.*`.
+- **SD Service** ([§9.3](#93-sd-service-design)) — inbound: each `SD_MCP` method; outbound:
+  `RAG_MCP.*`, `BP_MCP.*`, `GH_MCP.*`, `MON_MCP.*`.
+- **RAG Service** ([§9.2](#92-rag-service-design)) — inbound: `retrieve`, `index`, `delete`;
+  outbound: LLM calls (grader, faithfulness, rewriter, probe), embedding-model calls.
+
+**Span attributes.** Each span carries `mcp.method`, `mcp.domain` (for RAG calls),
+`mcp.status` (e.g., `ok`/`low_confidence`/`exhausted` for RAG retrieve), `mcp.latency_ms`, and
+`mcp.trace_id` propagated through MCP envelopes so a Portal query → Orchestrator → B&P → RAG chain
+shares one end-to-end trace. A `mcp.payload_summary` carries counts, IDs, and status — **not** raw
+queries or document content. Auto-RAG spans add rewrite count, grader scores, faithfulness
+pass/fail, and index-quality flags; ToT spans add branch count, depth reached, and winning score.
+
+**Derived metrics.** The trace stream is the source of truth for:
+
+- **Escalation rate** — fraction of background dispatches that emit an escalation envelope.
+- **Grader-fail rate** — fraction of Auto-RAG retrievals that go to rewrite or fall back.
+- **RAG status distribution** — counts of `ok` / `low_confidence` / `exhausted` per domain.
+- **Latency percentiles** — p50 / p95 per MCP method.
+- **ToT branch success rate** — fraction of ToT loops that exit before the depth cap.
+- **Index-quality hit rate** — chunks repeatedly surviving retrieval but failing the grader
+  (re-indexing signal closing the loop with [§9.2.1](#921-autonomous-rag-loop)).
+
+**Privacy.** Raw query text and full document content are NOT captured by default; the collector
+samples them only when explicitly enabled in dev configurations, so the
+[§1.4](PROJECT.md#14-principles-for-our-agent) PII guarantee stays policy-clean even when the
+trace backend is shared infrastructure.
+
+**Resilience.** Span emission is fire-and-forget — a failure in `OTEL_MCP` never blocks a
+service-to-service call. Spans are buffered locally if the collector is unreachable; the buffer
+is bounded so a sustained outage drops oldest-first rather than stalling agent work.
+
+### 9.8 Evaluation strategy (Module 6)
+
+The [§9.7](#97-audit-and-observability-module-6) trace stream tells us what the agent *did*; this
+section is about whether what it did was *any good*. Two layers: **online metrics** computed live from spans + doc
+indexes (cheap, runs
+continuously) and **offline metrics** that require labeling or sampling (slower, higher signal).
+
+**Online metrics** — derivable from the OTel trace stream ([§9.7](#97-audit-and-observability-module-6))
+and the per-specialist doc indexes ([§9.5](#95-orchestrator-service-design)) without any external
+labeling:
+
+- **Faithfulness pass rate** — fraction of generated answers that pass the post-generation
+  faithfulness re-grade ([§9.2.1](#921-autonomous-rag-loop)). Drops are an early signal of
+  hallucination drift in retrieval or in the answerer.
+- **Escalation rate** — fraction of background dispatches that emit an SME-escalation envelope
+  (already in [§9.7](#97-audit-and-observability-module-6)).
+- **Grader-fail rate** — fraction of Auto-RAG retrievals that fall through to rewrite or fallback
+  (already in [§9.7](#97-audit-and-observability-module-6)).
+- **RAG status distribution** — counts of `ok` / `low_confidence` / `exhausted` per domain (already
+  in [§9.7](#97-audit-and-observability-module-6)). A rising `exhausted` rate on `domain=bp` queries with `domain=sd` candidates suggests a
+  cross-reference gap rather than a chunking gap.
+- **Coverage** — `% products with a BP page` / `% services with an SD page`, computed from each
+  specialist's `doc_index`. A coverage drop after a refresh means the trigger or the diff missed
+  something.
+- **Freshness** — median age since last refresh per page; `% pages whose content_hash diverges
+  from the current source`. Both come from the doc index without any extra instrumentation.
+- **Open-placeholder rate** — `% pages with at least one unresolved SME-PLACEHOLDER`, derived from
+  each specialist's `open_placeholders` set ([§9.6.1](#961-placeholders-and-re-integration)).
+- **SME resolution time** — median / p95 time from `pending_sme_questions[id].posted_at` to
+  `ingest_sme_reply` ([§9.5](#95-orchestrator-service-design)). Tells us whether the SME loop is
+  keeping pace.
+- **Cross-reference health** — `% relative Markdown links to peer pages that resolve` on a
+  scheduled validator pass over the BP and SD folders. Broken links above a threshold trigger a
+  refresh of the referencing pages.
+- **Latency** — p50 / p95 per MCP method, end-to-end query latency, refresh latency per page (all
+  in [§9.7](#97-audit-and-observability-module-6)).
+- **ToT branch success rate** — fraction of ToT loops (chunking, dep-graph, gap-reconciliation)
+  that exit before the depth cap (already in [§9.7](#97-audit-and-observability-module-6)).
+- **Index-quality hit rate** — chunks repeatedly surviving retrieval but failing the grader; the
+  re-indexing signal that closes the loop with [§9.2.1](#921-autonomous-rag-loop).
+
+**Offline metrics** — require labeling, sampling, or human review. Higher signal than the online
+ones but slower to update:
+
+- **Correctness** — a small **golden Q&A set** (~30–50 questions across BP and SD domains, with
+  human-validated answers) scored against the agent's responses. Scoring uses LLM-as-judge with a
+  rubric (relevance, completeness, accuracy, citation quality) plus a periodic human spot-check to
+  recalibrate the judge. The golden set is curated by the team and grows over time.
+- **Calibration** — does the agent's `status` track reality? Computed from the golden set: of
+  answers stamped `ok`, what fraction the human reviewer also marked correct; of `low_confidence`,
+  what fraction were actually wrong. A miscalibrated `ok` is the worst failure mode (overconfident
+  hallucination).
+- **Hallucination rate** — separate from faithfulness: the faithfulness re-grade asks "is the
+  answer supported by retrieved chunks?", but a stronger check asks "is every factual claim in the
+  answer supported by at least one cited source?" Run periodically over a sample of recent answers
+  by an LLM judge with a stricter rubric.
+- **Page-quality review** — periodic sampling of newly-generated BP/SD pages, scored by an SME or
+  by an LLM-as-judge with a rubric (structure, completeness, accuracy, link quality). Catches
+  systematic regressions the online metrics miss.
+
+For POC scope (which metrics are wired up from day one, the LLM-as-judge cadence, and what is
+explicitly out of scope), see [Section 8.5](#85-considerations-for-the-poc).
