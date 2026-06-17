@@ -413,6 +413,9 @@ guardrails has better material to work with.
     leakage rates are not measured — they are policy-deferred per the
     [§8.4 known gaps](#84-guardrails-module-6). Adding them later is a harness change, not a
     metric-strategy change.
+- **LLM cost / latency** — the LLM runs locally on Ollama so token cost is not a concern for the
+  POC; latency is the proxy we monitor instead, via the per-MCP-method p50/p95 metrics from
+  [§9.7](#97-audit-and-observability-module-6).
 - **Deploy safety (Module 6)** — The guardrails in [§8.4](#84-guardrails-module-6) (loop bounds,
   output validation, escalation rules, cross-domain isolation, OTel-based runtime monitoring) give
   us enough confidence to deploy and observe in real time rather than flying blind. And because
