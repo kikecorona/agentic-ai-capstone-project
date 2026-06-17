@@ -196,11 +196,11 @@ There are 2 use cases where we want to use RAG capabilities:
 >
 > **Note:** Both the **B&P** and **SD** agents use RAG. The indexing methodology, chunking strategies, and quality
 > heuristic in this section apply to both — they invoke the same shared chunking sub-graph
-> ([Section 9.3.3](PROJECT_ARCHITECTURE.md#933-tot-chunking-strategy)) over their own input (input docs for B&P,
+> ([Section 9.4.2](PROJECT_ARCHITECTURE.md#942-tot-chunking-strategy)) over their own input (input docs for B&P,
 > generated SD pages for SD) and persist chunks into the **shared Embeddings Database** described in
 > [Section 8.2](PROJECT_ARCHITECTURE.md#82-high-level-architecture-diagram), each tagged with their
 > own `domain` (`bp` or `sd`). At query time both specialists run the same Auto-RAG loop against that
-> shared store ([Section 9.3.1](PROJECT_ARCHITECTURE.md#931-autonomous-rag-architecture-query-time))
+> shared store ([Section 9.2](PROJECT_ARCHITECTURE.md#92-autonomous-rag-architecture-query-time))
 > with an optional `domain_filter` — there is no peer-MCP retrieval call and no merge step.
 
 ### 6.1 Indexing methodology — principles & assumptions
@@ -239,9 +239,12 @@ Retrieval quality is very important. We'll use a simple heuristic approach with 
 
 - What if we cannot reach a similarity result over M percent? Do we discard the document, tag it as a low-confidence
   source, or something else?
-- Same question at **query time**: if the Autonomous RAG loop in [Section 9.3.1](PROJECT_ARCHITECTURE.md#931-autonomous-rag-architecture-query-time) exhausts its rewrite budget without
-  finding relevant documents, do we escalate to an SME, return a low-confidence answer with the closest matches, or
-  refuse to answer?
+
+> The corresponding query-time question is resolved in the architecture: when the Autonomous RAG loop
+> exhausts its rewrite budget at query time, return a low-confidence answer with the closest matches.
+> SME escalation only fires from background page builds — see
+> [Section 9.2](PROJECT_ARCHITECTURE.md#92-autonomous-rag-architecture-query-time) and
+> [Section 9.6](PROJECT_ARCHITECTURE.md#96-sme-interaction).
 
 
 ## 7. Applying Tree of Thoughts — ToT (Module 4)
