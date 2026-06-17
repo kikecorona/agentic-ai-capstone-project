@@ -194,14 +194,17 @@ There are 2 use cases where we want to use RAG capabilities:
 > the context. Here we want to use embeddings just to **select** the right document, and when possible (unless the
 > document is too large) use the **whole document** as part of the context.
 >
-> **Note:** Both the **B&P** and **SD** agents use RAG. The indexing methodology, chunking strategies, and quality
-> heuristic in this section apply to both — they invoke the same shared chunking sub-graph
-> ([Section 9.4.2](PROJECT_ARCHITECTURE.md#942-tot-chunking-strategy)) over their own input (input docs for B&P,
-> generated SD pages for SD) and persist chunks into the **shared Embeddings Database** described in
-> [Section 8.2](PROJECT_ARCHITECTURE.md#82-high-level-architecture-diagram), each tagged with their
-> own `domain` (`bp` or `sd`). At query time both specialists run the same Auto-RAG loop against that
-> shared store ([Section 9.2](PROJECT_ARCHITECTURE.md#92-autonomous-rag-architecture-query-time))
-> with an optional `domain_filter` — there is no peer-MCP retrieval call and no merge step.
+> **Note:** Both the **B&P** and **SD** agents use RAG, but neither runs the embedding pipeline
+> directly any more. The indexing methodology, chunking strategies, and quality heuristic in this
+> section live in the **RAG Service**
+> ([Section 9.2](PROJECT_ARCHITECTURE.md#92-rag-service-design)) — a fourth component that owns the
+> shared Embeddings Database, the embedding model, the Auto-RAG loop
+> ([Section 9.2.1](PROJECT_ARCHITECTURE.md#921-autonomous-rag-loop)), and the ToT chunking-strategy
+> sub-graph ([Section 9.2.2](PROJECT_ARCHITECTURE.md#922-tot-chunking-strategy)). At indexing time
+> B&P/SD hand a normalized document to `RAG_MCP.index(domain, source_uri, document)`; the service
+> picks a chunking strategy via ToT, embeds, and persists chunks tagged with the caller's `domain`.
+> At query time they delegate to `RAG_MCP.retrieve(query, domain_filter, mode)` and compose around
+> the response — no peer-MCP retrieval call, no merge step, no specialist-side embedding code.
 
 ### 6.1 Indexing methodology — principles & assumptions
 
@@ -240,10 +243,11 @@ Retrieval quality is very important. We'll use a simple heuristic approach with 
 - What if we cannot reach a similarity result over M percent? Do we discard the document, tag it as a low-confidence
   source, or something else?
 
-> The corresponding query-time question is resolved in the architecture: when the Autonomous RAG loop
-> exhausts its rewrite budget at query time, return a low-confidence answer with the closest matches.
-> SME escalation only fires from background page builds — see
-> [Section 9.2](PROJECT_ARCHITECTURE.md#92-autonomous-rag-architecture-query-time) and
+> The corresponding query-time question is resolved in the architecture: when the Autonomous RAG
+> loop exhausts its rewrite budget at query time, the RAG Service returns `status=low_confidence`
+> (or `exhausted`) and the calling specialist returns a low-confidence answer with the closest
+> matches. SME escalation only fires from background page builds — see
+> [Section 9.2.1](PROJECT_ARCHITECTURE.md#921-autonomous-rag-loop) and
 > [Section 9.6](PROJECT_ARCHITECTURE.md#96-sme-interaction).
 
 
