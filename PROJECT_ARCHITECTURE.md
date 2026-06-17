@@ -49,46 +49,51 @@ shows up, but stretching past three before then adds coordination cost without n
       pipeline, no code analysis, no ToT, no doc index, no sources inventory; all deep work and all
       per-domain state are owned by a specialist.
 - **B&P agent** *(Business & Product specialist)*
-    - **Owns** — the **BP pages in GitHub**, the **BP Embeddings Database**, the **BP doc index**
-      (per-page metadata: `last_updated`, `source_documents`, `content_hash`, `open_placeholders`,
-      embedding revision), and the **BP sources inventory** (input docs and their last-known hashes).
+    - **Owns** — the **BP pages in GitHub**, the **BP slice of the shared Embeddings Database** (chunks
+      tagged `domain=bp`), the **BP doc index** (per-page metadata: `last_updated`, `source_documents`,
+      `content_hash`, `open_placeholders`, embedding revision), and the **BP sources inventory** (input
+      docs and their last-known hashes).
     - **Does** — runs the indexing pipeline ([Section 6](PROJECT.md#6-retrieval-design--rag-module-3)), generates
       product and feature pages with
       cross-references to SD pages, answers query-time questions through the Autonomous RAG loop
       ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)), resolves SD links via the SD MCP,
       computes its own affected pages on a refresh event by diffing against its sources inventory.
-    - **Does not** — write into the SD pages, into the SD Embeddings Database, or read source code
-      directly; the SD MCP is the only path to any of these.
+    - **Does not** — write into the SD pages, write chunks tagged `domain=sd` into the shared
+      Embeddings Database, or read source code directly; the SD MCP is the only path to SD pages and
+      SD-side relational queries.
 - **SD agent** *(System Design specialist)*
-    - **Owns** — the **SD pages in GitHub**, the **SD Embeddings Database**, the **SD doc index**
-      (same shape as B&P's), and the **SD sources inventory** (last-known commit shas per service it
-      documents).
+    - **Owns** — the **SD pages in GitHub**, the **SD slice of the shared Embeddings Database** (chunks
+      tagged `domain=sd`), the **SD doc index** (same shape as B&P's), and the **SD sources inventory**
+      (last-known commit shas per service it documents).
     - **Does** — analyzes source code via the GitHub MCP, cross-checks telemetry via the Monitoring MCP,
       runs the ToT dep-graph loop ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 3), generates
       service/endpoint/dependency pages
       with cross-references to B&P pages, resolves B&P links via the B&P MCP, indexes its own pages into
-      the **SD Embeddings Database** through the shared chunking sub-graph
+      the **shared Embeddings Database** through the shared chunking sub-graph
       ([Section 9.3.3](#933-tot-chunking-strategy)), answers query-time questions through the same
       Auto-RAG sub-graph B&P uses ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)),
       computes its own affected pages on a refresh event by diffing against its sources inventory.
-    - **Does not** — write into the B&P pages or the BP Embeddings Database; the B&P MCP is the only
-      path to either.
+    - **Does not** — write into the B&P pages or write chunks tagged `domain=bp` into the shared
+      Embeddings Database; the B&P MCP is the only path to BP pages and BP-side relational queries.
 
-**Shared sub-graphs.** Both specialists run the same **ToT chunking strategy** sub-graph
+**Shared sub-graphs and shared store.** Both specialists run the same **ToT chunking strategy** sub-graph
 ([Section 9.3.3](#933-tot-chunking-strategy)) over their own input — input docs for B&P, generated SD
 pages for SD — and the same **Auto-RAG** sub-graph
-([Section 9.3.1](#931-autonomous-rag-architecture-query-time)) at query time, each against its own
-Embeddings Database. Cross-store retrieval is exposed as `retrieve(q, k)` on both MCPs and used when a
-query spans both domains.
+([Section 9.3.1](#931-autonomous-rag-architecture-query-time)) at query time. There is **one
+Embeddings Database** shared by both specialists; chunks carry a `domain` tag (`bp`|`sd`) plus the
+source URI, content hash, and chunking-strategy metadata, so writes stay scoped to the owning
+specialist's slice and reads can apply an optional domain filter when the query is single-domain.
+Cross-domain queries simply read the whole store — no peer-MCP retrieval call, no merge step.
 
 **Interaction patterns:**
 
 - **Supervisor → specialist** (Orchestrator → B&P/SD) — task envelopes for refresh or query work; the
   specialist runs its loop and returns a structured response or an escalation.
-- **Specialist ↔ specialist** (B&P ↔ SD) — read-only peer calls for cross-references and cross-store
-  retrieval. B&P calls SD MCP for "what services serve this product" or `retrieve(q, k)` to pull SD
-  chunks for cross-domain queries; SD calls B&P MCP for the reverse. Neither agent ever writes into
-  the other's store.
+- **Specialist ↔ specialist** (B&P ↔ SD) — read-only peer calls for **relational cross-references**.
+  B&P calls SD MCP for "what services serve this product"; SD calls B&P MCP for "what products depend
+  on this service". Similarity retrieval is not a peer call any more — both specialists query the
+  shared Embeddings Database directly. Neither agent writes into the other's slice of that store, and
+  neither writes into the other's pages.
 - **Specialist → supervisor** (escalation) — when a specialist can't resolve a question on its own
   (Auto-RAG exhausts its rewrites, the SD ToT can't pick a winner), it returns an SME-escalation
   envelope; the orchestrator queues it and surfaces it through the Portal ([Section 9.5](#95-sme-interaction)).
@@ -132,6 +137,7 @@ flowchart LR
     LLM[Local LLM<br/>e.g. Llama 3.1]
     GH([GitHub<br/>BP docs + SD docs<br/>+ source code])
     GH_MCP[GitHub MCP]
+    E_DS[(Shared Embeddings<br/>Database<br/>chunks tagged by domain)]
 
     subgraph OC [Orchestrator]
         OC_Service[Orchestrator Service<br/>ReAct]
@@ -143,11 +149,9 @@ subgraph BP [Business &amp; Product]
 BP_MCP[B&amp;P MCP]
 BP_Service[B&amp;P Service<br/>ReAct + ToT + Auto-RAG]
 BP_ToT[/ToT loop<br/>chunking strategy/]
-BP_E_DS[(BP Embeddings<br/>Database)]
 BP_DS[(BP doc index<br/>+ sources inventory)]
 BP_MCP --- BP_Service
 BP_Service --- BP_ToT
-BP_Service --- BP_E_DS
 BP_Service --- BP_DS
 end
 
@@ -156,13 +160,11 @@ SD_MCP[SD MCP]
 SD_Service[SD Service<br/>ReAct + ToT + Auto-RAG]
 SD_ToT[/ToT loop<br/>dependency graph/]
 SD_ToT_Chunk[/ToT loop<br/>chunking strategy/]
-SD_E_DS[(SD Embeddings<br/>Database)]
 SD_DS[(SD doc index<br/>+ sources inventory)]
 MON_MCP[Monitoring MCP]
 SD_MCP --- SD_Service
 SD_Service --- SD_ToT
 SD_Service --- SD_ToT_Chunk
-SD_Service --- SD_E_DS
 SD_Service --- SD_DS
 SD_ToT --- MON_MCP
 SD_Service --- MON_MCP
@@ -179,10 +181,12 @@ BP_Service --- LLM
 BP_ToT --- LLM
 BP_Service --- SD_MCP
 BP_Service --- GH_MCP
+BP_Service --- E_DS
 SD_Service --- LLM
 SD_ToT --- LLM
 SD_Service --- BP_MCP
 SD_Service --- GH_MCP
+SD_Service --- E_DS
 GH_MCP --- GH
 
 classDef oc fill: #E3F2FD, stroke: #1565C0, color:#0D47A1
@@ -190,6 +194,7 @@ classDef bp fill: #E8F5E9, stroke:#2E7D32, color: #1B5E20
 classDef sd fill:#FFF3E0, stroke: #EF6C00, color: #E65100
 classDef tot fill: #FCE4EC, stroke: #AD1457,color: #880E4F
 classDef docs fill: #F3E5F5,stroke: #6A1B9A, color: #4A148C
+classDef shared fill: #E0F7FA, stroke: #00838F, color: #006064
 classDef portal fill: #FFF9C4, stroke: #F57F17, color:#E65100
 classDef trigger fill: #FFEBEE, stroke:#C62828, color: #B71C1C
 class OC oc
@@ -197,6 +202,7 @@ class OC oc
     class SD sd
     class BP_ToT,SD_ToT,SD_ToT_Chunk tot
     class OC_DS,BP_DS,SD_DS docs
+    class E_DS shared
     class Portal portal
     class Trigger trigger
 ```
@@ -217,21 +223,32 @@ class OC oc
 - The **B&P Service** runs a **ReAct + ToT + Auto-RAG** loop. The ToT sub-routine selects the best chunking
   strategy per document during indexing ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 1); the
   Auto-RAG loop ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)) handles
-  query-time retrieval. It owns the **BP pages** in GitHub, the **BP Embeddings Database**, and the
-  **BP doc index + sources inventory** (per-page metadata and last-known input-doc hashes); it embeds
-  cross-references to SD pages for every service mentioned in a feature description.
+  query-time retrieval. It owns the **BP pages** in GitHub, the **BP slice of the shared Embeddings
+  Database** (chunks tagged `domain=bp`), and the **BP doc index + sources inventory** (per-page
+  metadata and last-known input-doc hashes); it embeds cross-references to SD pages for every service
+  mentioned in a feature description.
 - The **SD Service** runs a **ReAct + ToT + Auto-RAG** loop. One ToT sub-routine infers dependency graphs at
   indexing time using the **Monitoring MCP** as part of the
   evaluator ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 3); a second ToT
   sub-routine — the same **chunking strategy** sub-graph B&P uses
   ([Section 9.3.3](#933-tot-chunking-strategy)) — runs over each generated SD page so it lands in the
-  **SD Embeddings Database**. It owns the **SD pages** in
-  GitHub, the **SD Embeddings Database**, and the **SD doc index + sources inventory** (per-page
-  metadata and last-known commit shas per documented service); it embeds cross-references to B&P pages
-  for every product served by a given service or endpoint, and answers query-time questions through the
-  shared Auto-RAG loop ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)).
-- **Single storage** — all generated documentation (BP and SD) lives in the same GitHub repo as the source
-  code. They are different folders (`/bp/` and `/sd/` for the POC, see [Section 8.3](#83-considerations-for-the-poc));
+  **shared Embeddings Database** with `domain=sd`. It owns the **SD pages** in
+  GitHub, the **SD slice of the shared Embeddings Database**, and the **SD doc index + sources
+  inventory** (per-page metadata and last-known commit shas per documented service); it embeds
+  cross-references to B&P pages for every product served by a given service or endpoint, and answers
+  query-time questions through the shared Auto-RAG loop
+  ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)).
+- **Shared Embeddings Database** — there is one vector store for all documentation chunks. Each chunk
+  carries a `domain` tag (`bp`|`sd`) plus the source URI, content hash, and chunking-strategy
+  metadata. Writes are scoped to the owning specialist's slice (B&P only writes `domain=bp`, SD only
+  writes `domain=sd`); reads can apply an optional domain filter when the query is single-domain, or
+  read the whole store when it spans both. This collapses what would otherwise be two stores plus a
+  cross-store retrieval contract into a single store with a tag-based ownership boundary, and lets the
+  Auto-RAG loop in [Section 9.3.1](#931-autonomous-rag-architecture-query-time) stay free of merge
+  logic. The trade-off is a single embedding model and a shared schema across both domains; the
+  domain tag is the contract that keeps refresh and invalidation per-specialist.
+- **Single storage for pages** — all generated documentation (BP and SD) lives in the same GitHub repo as the
+  source code. They are different folders (`/bp/` and `/sd/` for the POC, see [Section 8.3](#83-considerations-for-the-poc));
   cross-references are
   plain relative Markdown links. The Portal reads these folders directly to render the docs; agents read and
   write through the **GitHub MCP**.
@@ -239,8 +256,8 @@ class OC oc
   discovered projects/services, (b) refreshes existing pages whose source code or input docs have drifted,
   (c) re-validates cross-references and downgrades broken links to "follow-up", (d) ingests new SME responses
   delivered via the Portal. Refreshes are kicked off by the **Update Trigger**; on each refresh the B&P agent
-  re-runs its indexing pipeline ([Section 6](PROJECT.md#6-retrieval-design--rag-module-3)) so the **Embeddings Database
-  ** stays in sync with the B&P pages.
+  re-runs its indexing pipeline ([Section 6](PROJECT.md#6-retrieval-design--rag-module-3)) so its slice of the
+  **shared Embeddings Database** stays in sync with the B&P pages.
   The "read-only" principle from [Section 1.4](PROJECT.md#14-principles-for-our-agent) applies only to the *external
   systems* the agent inspects — the
   agent's own documentation output is in constant flux, version-controlled by Git.
@@ -264,9 +281,10 @@ class OC oc
   back to code references and existing documentation as the only evaluator signals.
 - For the POC the ToT loops will run with **B=2–3** and **D=2–3** ([Section 7.4](PROJECT.md#74-search-strategy)) to
   bound the number of LLM calls per loop. The same bounds apply to SD's chunking ToT.
-- For the POC the **SD Embeddings Database** indexes only the generated SD pages, not source code itself.
-  Indexing source code is a later phase that would slot in as another input to the same shared chunking
-  sub-graph without changing the rest of the topology.
+- For the POC the **shared Embeddings Database** indexes B&P input docs and the generated SD pages —
+  not source code itself. Indexing source code is a later phase that would slot in as another input to
+  the same shared chunking sub-graph (with its own `domain` or `domain=sd, kind=source` tag) without
+  changing the rest of the topology.
 - For the POC the B&P and SD documentation can share **a single GitHub repo** with two top-level folders
   (`/bp/` and `/sd/`) — easier link resolution and a single PR review surface. Splitting into two repos is a later
   optimization if access control becomes an issue.
@@ -328,8 +346,8 @@ Both the **B&P** and **SD** services run in two modes against the same LangGraph
   doc and falls back to live code
   analysis when needed.
 
-Both modes share the same MCPs, the same LLM, and the same doc stores. The difference is the entry point
-and the depth of work performed.
+Both modes share the same MCPs, the same LLM, and the same shared Embeddings Database. The difference
+is the entry point and the depth of work performed.
 
 ### 9.2 SD Service design
 
@@ -343,17 +361,19 @@ MCP** when wired in, runs the **ToT loop** ([Section 7.1](PROJECT.md#71-where-to
 pick the best dependency graph
 among several candidates, calls the **B&P MCP** to resolve cross-references, writes the resulting page
 as Markdown into the **SD pages** in GitHub, then runs the shared **ToT chunking strategy** sub-graph
-([Section 9.3.3](#933-tot-chunking-strategy)) over the new page and persists chunks into the **SD
-Embeddings Database**. SD's own `doc_index` records the new revision so
-the next refresh knows what changed.
+([Section 9.3.3](#933-tot-chunking-strategy)) over the new page and persists chunks into the **shared
+Embeddings Database** with `domain=sd`. SD's own `doc_index` records the new revision so the next
+refresh knows what changed.
 
 **Query mode** — a question routed to SD runs the shared **Auto-RAG** sub-graph
-([Section 9.3.1](#931-autonomous-rag-architecture-query-time)) against the **SD Embeddings Database**.
-If the grader is satisfied, the answer is composed from retrieved chunks with citations. If the loop
-exhausts its rewrite budget — typically because the existing SD page genuinely doesn't cover the
-question — a focused `analyze_code` pass runs on a targeted subset of files (the file backing the
-closest-matching endpoint) and feeds the composer. If the answer is still
-low-confidence, escalate through the SME flow ([Section 9.5](#95-sme-interaction)).
+([Section 9.3.1](#931-autonomous-rag-architecture-query-time)) against the **shared Embeddings
+Database**. The orchestrator's dispatch envelope seeds an SD-domain hint that the router uses as the
+default filter; cross-domain queries simply drop the filter and read the whole store. If the grader is
+satisfied, the answer is composed from retrieved chunks with citations. If the loop exhausts its
+rewrite budget — typically because the existing SD page genuinely doesn't cover the question — a
+focused `analyze_code` pass runs on a targeted subset of files (the file backing the closest-matching
+endpoint) and feeds the composer. If the answer is still low-confidence, escalate through the SME flow
+([Section 9.5](#95-sme-interaction)).
 
 Reusing the same code-analysis node across both modes keeps the live answers consistent with what we
 documented during the last refresh — they come from the same logic. Reusing the same Auto-RAG sub-graph
@@ -373,14 +393,14 @@ sufficient or focused code analysis is needed.
 %%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
 flowchart LR
     Trig([Update Trigger]) --> Pull[pull source<br/>via GitHub MCP]
-    Port([Portal query]) --> Auto[Auto-RAG loop<br/>vs SD Embeddings]
+    Port([Portal query]) --> Auto[Auto-RAG loop<br/>vs shared Embeddings DB<br/>domain=sd hint]
     Pull --> AC[analyze_code]
     AC --> Tele[verify telemetry<br/>via Monitoring MCP]
     Tele --> ToT[ToT: dep graph]
     ToT --> XR[resolve_bp_links<br/>via BP MCP]
     XR --> Write[write SD doc]
     Write --> ToTChunk[ToT: chunking strategy]
-    ToTChunk --> Embed[embed into<br/>SD Embeddings DB]
+    ToTChunk --> Embed[embed into<br/>shared Embeddings DB<br/>domain=sd]
     Embed --> Done([SD doc + index updated])
     Auto --> Cover{Auto-RAG<br/>satisfied?}
     Cover -->|yes| Compose[compose answer<br/>+ citations]
@@ -501,17 +521,21 @@ so that a B&P page about a product links to the services that implement it.
 
 **Background mode** — the agent ingests input documents (org docs from the Git repo for the POC), runs the
 **ToT chunking-strategy loop** ([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 1) per document — the same shared sub-graph SD uses for its own pages —
-writes embeddings into the
-**BP Embeddings Database**, and produces the corresponding B&P page. Right before writing, a `resolve_sd_links`
+writes embeddings into the **shared Embeddings Database** with `domain=bp`, and produces the
+corresponding B&P page. Right before writing, a `resolve_sd_links`
 node calls the **SD MCP** to enumerate the services that back the product or feature described on the page;
 the resulting links are inlined as relative Markdown links to the SD pages. Stale links surface as
 follow-up tasks rather than silent rot — the next refresh re-validates them.
 
 **Query mode** — incoming questions are answered by the **Autonomous RAG**
-loop ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)) — the same shared sub-graph SD invokes — running against the **BP Embeddings Database** (and, for cross-domain queries, the SD store via `SD_MCP.retrieve`). When the
-loop references a service in its answer, the same `resolve_sd_links` node runs to resolve the reference at
-answer time, so the user sees an up-to-date link even if the persisted page is briefly stale. If the loop
-exhausts its rewrite budget, it escalates through the SME flow ([Section 9.5](#95-sme-interaction)).
+loop ([Section 9.3.1](#931-autonomous-rag-architecture-query-time)) — the same shared sub-graph SD
+invokes — running against the **shared Embeddings Database**. The orchestrator's dispatch envelope
+seeds a BP-domain hint that the router uses as the default filter; cross-domain queries drop the
+filter and read the whole store, so the grader sees BP and SD chunks together without any merge step.
+When the loop references a service in its answer, the same `resolve_sd_links` node runs to resolve the
+reference at answer time, so the user sees an up-to-date link even if the persisted page is briefly
+stale. If the loop exhausts its rewrite budget, it escalates through the SME flow
+([Section 9.5](#95-sme-interaction)).
 
 The cross-referencing direction is symmetric with SD: B&P calls **SD MCP** to resolve "what services serve
 this product"; SD calls **B&P MCP** to resolve "what products depend on this service". The two services do
@@ -529,9 +553,9 @@ retrieve → grade → rewrite` cycle.
 %%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
 flowchart LR
     Trig([Update Trigger]) --> Ingest[ingest input docs<br/>via GitHub MCP]
-    Port([Portal query]) --> Auto[Auto-RAG loop]
+    Port([Portal query]) --> Auto[Auto-RAG loop<br/>vs shared Embeddings DB<br/>domain=bp hint]
     Ingest --> ToT[ToT: chunking strategy]
-    ToT --> Embed[embed into<br/>Embeddings DB]
+    ToT --> Embed[embed into<br/>shared Embeddings DB<br/>domain=bp]
     Embed --> XR1[resolve_sd_links<br/>via SD MCP]
     XR1 --> Write[write BP doc]
     Write --> Done([BP doc updated])
@@ -551,25 +575,31 @@ flowchart LR
 RAG** loop so a specialist can self-correct when retrieval is weak instead of returning a low-confidence answer
 silently. The loop has four nodes — **decide → retrieve → grade → rewrite** — wired as a LangGraph `StateGraph`,
 same harness style as the ToT loops ([Section 7.5](PROJECT.md#75-mapping-tot-roles-to-tools)). The same sub-graph
-is invoked by both **B&P** and **SD** at query time, each against its own Embeddings Database.
+is invoked by both **B&P** and **SD** at query time, and both run against the **shared Embeddings
+Database** ([Section 8.2](#82-high-level-architecture-diagram)). There is no per-store retrieval and
+no peer-MCP `retrieve(q, k)` call — the chunks for both domains live in one index, separated by a
+`domain` tag rather than by a store boundary.
 
 The nodes:
 
-1. **Decision (router)** — classifies the query into `{no_retrieval, own_store, cross_store}`. Some questions
-   are answered from static context and skip retrieval. `own_store` retrieves only from the calling
-   specialist's Embeddings Database; `cross_store` also calls the peer MCP's `retrieve(q, k)` method and
-   merges candidates before grading. The Orchestrator's dispatch envelope
-   ([Section 9.4](#94-orchestrator-service-design)) seeds this initial route based on whether it dispatched
-   to one or both specialists.
+1. **Decision (router)** — classifies the query into `{no_retrieval, retrieve}` and, when retrieving,
+   picks a `domain_filter` ∈ `{bp, sd, both}`. Some questions are answered from static context and
+   skip retrieval. The Orchestrator's dispatch envelope
+   ([Section 9.4](#94-orchestrator-service-design)) seeds the filter: a single-specialist dispatch
+   becomes a hint toward that domain; a both-specialist dispatch becomes `both`. The router can drop
+   the filter on its own if a single-domain hint produces nothing usable two rewrites in a row.
 2. **Retrieval** — similarity search against the chosen embedding
-   view ([Section 6.3](PROJECT.md#63-for-indexing-each-document)). K is small (2–5) since we
-   pull the **whole document** into context once it has been selected. Under `cross_store`, the same K
-   applies per side and the merged candidate set is passed to the grader.
+   view ([Section 6.3](PROJECT.md#63-for-indexing-each-document)) on the shared Embeddings Database,
+   constrained by the router's `domain_filter`. K is small (2–5) since we pull the **whole document**
+   into context once it has been selected. There is no merge step — the filter (or its absence) is
+   pushed into the vector query and the grader sees a single ranked list.
 3. **Grader** — an LLM scores each retrieved document 0–3. If all are below threshold, the loop goes to the
    rewriter; otherwise the survivors go to answer generation, and we run a second grading pass for **faithfulness**
    to catch hallucinations.
 4. **Query rewriter** — invoked when the grader produces nothing usable. Rewrites the query (acronyms, synonyms,
-   scope, sub-queries) and loops back to retrieval. Bounded to **R=2** rewrites per question.
+   scope, sub-queries) and loops back to retrieval. Bounded to **R=2** rewrites per question. May also
+   widen `domain_filter` (e.g., from `bp` to `both`) when the failure pattern suggests cross-domain
+   evidence is needed.
 
 Loop control and failure modes:
 
@@ -581,24 +611,25 @@ Loop control and failure modes:
 - If the same document repeatedly survives retrieval but fails the grader, the orchestrator flags it for re-indexing
   with a different chunking strategy (the ToT use case 1
   from [Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project)) — closing the loop between query-time
-  and indexing-time decisions.
+  and indexing-time decisions. The flag is routed to the specialist that owns the chunk's `domain` tag,
+  so re-indexing stays per-specialist even though the index is shared.
 - Cache `(query → graded retrieval)` for the lifetime of a single agent run.
 
 The loop is a shared sub-graph imported by both the **B&P Service** and the **SD Service**
-([Section 8](#8-high-level-architecture-module-5)); each specialist runs it against its own Embeddings
-Database and writes back the index-quality signals above. The router and rewriter can become ToT
-decision points later if their single-pass calls underperform; for the POC we keep them single-pass.
+([Section 8](#8-high-level-architecture-module-5)); both run it against the same shared Embeddings
+Database and write back their own index-quality signals (scoped by `domain` tag). The router and
+rewriter can become ToT decision points later if their single-pass calls underperform; for the POC we
+keep them single-pass.
 
 ```mermaid
 %%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
 flowchart LR
-    Q([User query]) --> D{Decide<br/>route}
+    Q([User query]) --> D{Decide<br/>retrieve?}
     D -->|no retrieval| Gen[Generate answer]
-    D -->|own store| R[Retrieve top-K<br/>own + peer if cross-store]
-    D -->|cross-store| R
+    D -->|retrieve| R[Retrieve top-K<br/>shared Embeddings DB<br/>+ domain_filter]
     R --> G{Grade<br/>relevance}
     G -->|≥ threshold| Gen
-    G -->|all below,<br/>rewrites left| RW[Rewrite query]
+    G -->|all below,<br/>rewrites left| RW[Rewrite query<br/>maybe widen filter]
     G -->|all below,<br/>budget exhausted| FB[Fallback]
     RW --> R
     Gen --> CF{Faithful?}
@@ -644,16 +675,18 @@ in [Section 6.2](PROJECT.md#62-chunking-strategies)
 6. **Iterate** — beam-search keeps the top B=2–3 surviving candidates and expands variants (different
    chunk sizes, hybrid combinations) for the next level. Stops at depth D=2–3 or when one candidate
    clearly beats the others.
-7. **Persist** — the winning candidate's chunks and embeddings are written to the **Embeddings
-   Database**; the strategy itself is persisted as metadata so query-time retrieval can reuse it.
+7. **Persist** — the winning candidate's chunks and embeddings are written to the **shared Embeddings
+   Database** with the calling specialist's `domain` tag (`bp` or `sd`); the strategy itself is
+   persisted as metadata so query-time retrieval can reuse it.
 
 If no candidate clears the threshold at depth D, the document is tagged low-confidence and indexed with
 the highest-scoring strategy anyway.
 
 This sub-graph is shared: both B&P and SD invoke it during their indexing steps and each persists the
-winning chunks into its own Embeddings Database. The probe step's question generator is content-driven,
-so domain prose differences (B&P narrative vs SD structured prose) flow through naturally — the winning
-strategy can differ per page without any agent-specific tuning.
+winning chunks into the shared Embeddings Database, scoped by its own `domain` tag. The probe step's
+question generator is content-driven, so domain prose differences (B&P narrative vs SD structured
+prose) flow through naturally — the winning strategy can differ per page without any agent-specific
+tuning.
 
 ### 9.4 Orchestrator Service design
 
@@ -795,8 +828,9 @@ resolve on its own and the resulting question is escalated to an SME via [Sectio
 common cases:
 
 - **Specialist Auto-RAG** — the shared Auto-RAG loop ([Section 9.3.1](#931-autonomous-rag-architecture-query-time))
-  runs while building or refreshing a page (B&P over its input docs, SD over the SD store and a peer-MCP
-  cross-store call) and exhausts its rewrite budget on a sub-question that's necessary for the page (e.g.,
+  runs while building or refreshing a page (B&P over its input docs, SD over the SD slice of the
+  shared store, optionally widening the domain filter when the question needs cross-domain evidence)
+  and exhausts its rewrite budget on a sub-question that's necessary for the page (e.g.,
   the canonical owner of a feature flag, or the product context for an SD endpoint).
 - **SD code-analysis gaps** — `analyze_code` tags a route or call as `dynamic` ([Section 9.2.1](#921-analyze_code))
   or the ToT dep-graph evaluator can't pick a winner ([Section 9.2.3](#923-tot-dep-graph)).

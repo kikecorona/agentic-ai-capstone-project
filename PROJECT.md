@@ -197,8 +197,11 @@ There are 2 use cases where we want to use RAG capabilities:
 > **Note:** Both the **B&P** and **SD** agents use RAG. The indexing methodology, chunking strategies, and quality
 > heuristic in this section apply to both — they invoke the same shared chunking sub-graph
 > ([Section 9.3.3](PROJECT_ARCHITECTURE.md#933-tot-chunking-strategy)) over their own input (input docs for B&P,
-> generated SD pages for SD) and each persists chunks into its own Embeddings Database. Cross-store retrieval at
-> query time is exposed as `retrieve(q, k)` on both MCPs.
+> generated SD pages for SD) and persist chunks into the **shared Embeddings Database** described in
+> [Section 8.2](PROJECT_ARCHITECTURE.md#82-high-level-architecture-diagram), each tagged with their
+> own `domain` (`bp` or `sd`). At query time both specialists run the same Auto-RAG loop against that
+> shared store ([Section 9.3.1](PROJECT_ARCHITECTURE.md#931-autonomous-rag-architecture-query-time))
+> with an optional `domain_filter` — there is no peer-MCP retrieval call and no merge step.
 
 ### 6.1 Indexing methodology — principles & assumptions
 
