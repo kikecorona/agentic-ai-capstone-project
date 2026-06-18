@@ -197,10 +197,10 @@ There are 2 use cases where we want to use RAG capabilities:
 > **Note:** Both the **B&P** and **SD** agents use RAG, but neither runs the embedding pipeline
 > directly any more. The indexing methodology, chunking strategies, and quality heuristic in this
 > section live in the **RAG Service**
-> ([Section 9.2](PROJECT_ARCHITECTURE.md#92-rag-service-design)) — a fourth component that owns the
+> ([Section 9.1](PROJECT_LOW_LEVEL_DESIGN.md#91-rag-service-design)) — a fourth component that owns the
 > shared Embeddings Database, the embedding model, the Auto-RAG loop
-> ([Section 9.2.1](PROJECT_ARCHITECTURE.md#921-autonomous-rag-loop)), and the ToT chunking-strategy
-> sub-graph ([Section 9.2.2](PROJECT_ARCHITECTURE.md#922-tot-chunking-strategy)). At indexing time
+> ([Section 9.1.3.1](PROJECT_LOW_LEVEL_DESIGN.md#9131-autonomous-rag-loop)), and the ToT chunking-strategy
+> sub-graph ([Section 9.1.3.2](PROJECT_LOW_LEVEL_DESIGN.md#9132-tot-chunking-strategy)). At indexing time
 > B&P/SD hand a normalized document to `RAG_MCP.index(domain, source_uri, document)`; the service
 > picks a chunking strategy via ToT, embeds, and persists chunks tagged with the caller's `domain`.
 > At query time they delegate to `RAG_MCP.retrieve(query, domain_filter, mode)` and compose around
@@ -247,8 +247,8 @@ Retrieval quality is very important. We'll use a simple heuristic approach with 
 > loop exhausts its rewrite budget at query time, the RAG Service returns `status=low_confidence`
 > (or `exhausted`) and the calling specialist returns a low-confidence answer with the closest
 > matches. SME escalation only fires from background page builds — see
-> [Section 9.2.1](PROJECT_ARCHITECTURE.md#921-autonomous-rag-loop) and
-> [Section 9.6](PROJECT_ARCHITECTURE.md#96-sme-interaction).
+> [Section 9.1.3.1](PROJECT_LOW_LEVEL_DESIGN.md#9131-autonomous-rag-loop) and
+> [Section 9.5](PROJECT_LOW_LEVEL_DESIGN.md#95-sme-interaction-module-6).
 
 
 ## 7. Applying Tree of Thoughts — ToT (Module 4)
@@ -451,5 +451,6 @@ We'll adopt **ToT selectively** rather than globally:
 
 ---
 
-The high-level and low-level design (Sections 8 and 9) lives in [PROJECT_ARCHITECTURE.md](PROJECT_ARCHITECTURE.md).
+Continue to [PROJECT_ARCHITECTURE.md](PROJECT_ARCHITECTURE.md) for the high-level design (Section 8),
+and [PROJECT_LOW_LEVEL_DESIGN.md](PROJECT_LOW_LEVEL_DESIGN.md) for the low-level design (Section 9).
 
