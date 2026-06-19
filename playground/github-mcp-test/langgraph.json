@@ -1,7 +1,0 @@
-{
-  "dependencies": ["."],
-  "graphs": {
-    "agent": "./github-mcp-with-langgraph.py:graph"
-  },
-  "env": ".env"
-}

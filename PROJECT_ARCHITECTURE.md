@@ -1,10 +1,12 @@
-# Capstone Project — Architecture
+# Capstone Project — Research Agent for Org Knowledge (Architecture)
 
 Enrique R. Corona Dominguez
 
-> Disclaimer: I wrote this with help from Claude Code, I provided a lot of guidance, suggestions, corrections and for
+---
+
+> *Disclaimer: I wrote this with help from Claude Code, I provided a lot of guidance, suggestions, corrections and for
 > the most part defined the high level architecture and
-> implementation details based on the course lectures.
+> implementation details based on the course lectures.*
 
 > As stated in [Section 1.3](PROJECT.md#13-proposed-solution), we're implementing a **Research Agent** that
 > helps our leadership, developers, and product managers have a complete view of the architecture,
@@ -380,11 +382,12 @@ guardrails has better material to work with.
   Service's chunking ToT.
 - **RAG Service** runs in-process with a local ChromaDB instance. Splitting it behind
   `RAG_MCP`-over-HTTP is a later optimization; the contract with B&P/SD doesn't change.
-- **OpenTelemetry MCP** is built for the POC as a thin OTel collector fronted by an MCP. Each
-  service emits spans for inbound and outbound calls (request envelope, response status, latency);
-  the collector persists them locally (file-based or SQLite). Production deployments would swap
-  the collector for a real OTel backend (Tempo, Honeycomb, etc.) without changing the service-side
-  wiring.
+- **OpenTelemetry MCP** — for the POC, every inbound/outbound MCP call lands as a span in a
+  thin local collector fronted by an MCP. Production swaps it for a real OTel backend (Tempo,
+  Honeycomb, etc.); the service-side wiring doesn't change.
+- **In-service audit log** — complement to OTel spans: every LLM call and every service-level
+  log entry (`info`/`warn`/`error`) lands in a shared local SQLite store. Production swaps it
+  for Splunk or an equivalent log platform; the per-call API on the service side doesn't change.
 - **Indexed content** is BP input docs and generated SD pages only, not source code. Source-code
   indexing slots in later as another input to `RAG_MCP.index` without changing the topology.
 - **Page storage** — BP and SD share a single GitHub repo with

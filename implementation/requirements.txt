@@ -1,0 +1,29 @@
+# --- Core LLM + agent harness ----------------------------------------------
+langchain-core>=1.4.0
+langchain-ollama>=1.1.0
+langchain-mcp-adapters>=0.3.0
+langgraph>=1.2.2
+ollama>=0.6.2
+
+# --- MCP server SDK (used by OTel MCP and RAG MCP) -------------------------
+mcp>=1.27.2
+
+# --- RAG (vector store) -----------------------------------------------------
+# Chroma ships its own ONNX-backed default embedder (all-MiniLM-L6-v2),
+# so embeddings work without any extra Ollama model. The LLM still runs
+# on Ollama (llama3.1:8b) per the architecture spec.
+chromadb>=0.5
+
+# --- HTTP services (Orchestrator REST, future Portal) ----------------------
+fastapi>=0.115
+uvicorn>=0.32
+pydantic>=2.9
+httpx>=0.27
+
+# --- Utilities --------------------------------------------------------------
+python-dotenv>=1.0
+typing-extensions>=4.12
+
+# --- Tests ------------------------------------------------------------------
+pytest>=8
+pytest-asyncio>=0.24

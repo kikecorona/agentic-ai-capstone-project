@@ -1,0 +1,16 @@
+// src/css/quasar.variables.scss
+// Required by Quasar's SCSS pipeline — variables Quasar reads at
+// compile time. We override only the colour set used by the 80s retro
+// skin in retro.scss; the rest stay at framework defaults.
+
+$primary:   #ff6b35;
+$secondary: #ffd600;
+$accent:    #00acc1;
+
+$dark:      #1a1a2e;
+$dark-page: #1a1a2e;
+
+$positive:  #2e7d32;
+$negative:  #ff5252;
+$info:      #00acc1;
+$warning:   #ffd600;

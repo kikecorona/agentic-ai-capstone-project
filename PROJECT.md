@@ -1,6 +1,8 @@
-# Capstone Project — Research Agent for Org Knowledge
+# Capstone Project — Research Agent for Org Knowledge (Introduction)
 
 Enrique R. Corona Dominguez
+
+---
 
 ## 1. Introduction (Module 1)
 

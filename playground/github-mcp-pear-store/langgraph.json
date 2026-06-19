@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./github-mcp-pear-store.py:graph"
+  },
+  "env": ".env"
+}

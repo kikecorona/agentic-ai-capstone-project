@@ -1,0 +1,34 @@
+/* eslint-env node */
+/*
+ * Quasar v2 (Vue 3) configuration for the Documentation Portal.
+ * Wired up minimally — most behavior is the Quasar defaults; the only
+ * deliberate knobs are:
+ *   - 80s retro theme via src/css/retro.scss
+ *   - global axios + a tiny boot file that wires the API base URL
+ *   - default dev port 9000 (the orchestrator REST API uses 8000)
+ */
+const { configure } = require("quasar/wrappers");
+
+module.exports = configure(function (/* ctx */) {
+  return {
+    boot: ["apis"],
+    css: ["app.scss", "retro.scss"],
+    extras: [
+      "roboto-font", // body fallback
+      "material-icons",
+    ],
+    build: {
+      target: { browser: ["es2022"], node: "node18" },
+      vueRouterMode: "history",
+    },
+    devServer: {
+      port: Number(process.env.PORTAL_PORT || 9000),
+      open: false,
+    },
+    framework: {
+      config: {},
+      plugins: ["Notify"],
+    },
+    animations: [],
+  };
+});

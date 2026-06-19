@@ -1,0 +1,48 @@
+// src/css/retro.scss
+// 80s retro orange skin — applied on top of Quasar's PRECOMPILED CSS bundle
+// (no SASS variable injection into Quasar's source, which avoids the SASS
+// modules / `:has()` parser interactions in app-vite). Quasar's own colour
+// tokens are overridden at runtime via `setCssVar()` in src/boot/apis.js.
+//
+// Palette:
+//   #FF6B35  hot retro orange   (primary)
+//   #FFD600  sunset yellow      (secondary / highlight)
+//   #00ACC1  retro teal         (accent / links)
+//   #1A1A2E  dark blue-black    (page background)
+//   #1C1F33  slate              (panels)
+//   #F5E6D3  cream              (body text)
+
+body {
+  background: #1a1a2e;
+  color: #f5e6d3;
+  font-family: "JetBrains Mono", "Roboto Mono", monospace;
+}
+
+// Page surface inherits the dark background.
+.q-page {
+  background: #1a1a2e;
+  color: #f5e6d3;
+}
+
+// Display / heading font for retro emphasis.
+.retro-display,
+.retro-tabs :deep(.q-tab__label) {
+  font-family: "VT323", "JetBrains Mono", monospace;
+}
+
+// Tab indicator: a chunky bar in accent teal.
+.q-tab--active .q-tab__indicator,
+.q-tab--active.q-tab__indicator {
+  height: 4px;
+  background: #00acc1;
+}
+
+// Card borders blend in with the dark surfaces.
+.q-card--bordered {
+  border-color: #2c2c3e;
+}
+
+// Chip squared by default — fits the retro vibe.
+.q-chip--square {
+  border-radius: 2px;
+}

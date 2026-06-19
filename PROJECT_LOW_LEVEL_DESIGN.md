@@ -1,10 +1,12 @@
-# Capstone Project — Low-Level Design
+# Capstone Project — Research Agent for Org Knowledge (Low-Level Design)
 
 Enrique R. Corona Dominguez
 
-> Disclaimer: I wrote this with help from Claude Code, I provided a lot of guidance, suggestions, corrections and for
+---
+
+> *Disclaimer: I wrote this with help from Claude Code, I provided a lot of guidance, suggestions, corrections and for
 > the most part defined the high level architecture and
-> implementation details based on the course lectures.
+> implementation details based on the course lectures.*
 
 > As stated in [Section 1.3](PROJECT.md#13-proposed-solution), we're implementing a **Research Agent** that
 > helps our leadership, developers, and product managers have a complete view of the architecture,
@@ -44,8 +46,9 @@ Methods exposed by `RAG_MCP`:
   runs the Autonomous RAG loop. `domain_filter ∈ {bp, sd, both}` is pushed into the vector query;
   `mode ∈ {query, background}` is advisory metadata that lets the loop tune limits and lets the
   caller branch on the response. `status ∈ {ok, low_confidence, exhausted}` summarises the outcome:
-  `ok` means the answer cleared the grader and the faithfulness check; `low_confidence` means the
-  rewrite budget was exhausted but a best-effort answer is included with the closest matches;
+  `ok` means the answer cleared the grader **and** the answer re-grade (both axes — faithfulness
+  and answerability); `low_confidence` means the rewrite budget was exhausted but a best-effort
+  answer is included with the closest matches;
   `exhausted` means no usable evidence was found and no answer is returned. The caller decides what
   to do — query mode returns the answer (or a low-confidence fallback) to the user; background mode
   may write an SME placeholder when `status` is `low_confidence` or `exhausted` on a sub-question
@@ -109,8 +112,12 @@ The nodes:
    into context once it has been selected. There is no merge step — the filter (or its absence) is
    pushed into the vector query and the grader sees a single ranked list.
 3. **Grader** — an LLM scores each retrieved document 0–3. If all are below threshold, the loop goes
-   to the rewriter; otherwise the survivors go to answer generation, and we run a second grading
-   pass for **faithfulness** to catch hallucinations.
+   to the rewriter; otherwise the survivors go to answer generation, followed by a second-pass
+   **answer re-grade** that scores the generated answer along two axes: **faithfulness** (every
+   claim is supported by a source — catches hallucinations) and **answerability** (the answer
+   substantively addresses the query — catches faithful refusals like *"the sources don't mention
+   X"* that pass the faithfulness check but leave the user without a real answer). Both axes are
+   gates: `status=ok` requires both to pass.
 4. **Query rewriter** — invoked when the grader produces nothing usable. Rewrites the query
    (acronyms, synonyms, scope, sub-queries) and loops back to retrieval. Bounded to **R=2** rewrites
    per question. May also widen `domain_filter` (e.g., from `bp` to `both`) when the failure pattern
@@ -125,8 +132,9 @@ Loop control and failure modes:
   answer to the user; in **background mode** they turn it into an SME escalation
   ([Section 9.5](#95-sme-interaction-module-6)) and write a placeholder block
   ([Section 9.5.1](#951-placeholders-and-re-integration)).
-- If the post-generation faithfulness check fails, trigger one rewrite cycle on the unsupported
-  claims; if it still fails after the cycle, downgrade `status` to `low_confidence` and return.
+- If the post-generation answer re-grade fails on either axis (unsupported claims **or** a
+  non-substantive answer such as a graceful refusal), trigger one rewrite cycle; if it still fails
+  after the cycle, downgrade `status` to `low_confidence` and return.
 - If the same document repeatedly survives retrieval but fails the grader, the loop emits an
   index-quality flag in the `retrieval_trail` so the calling specialist can re-index that source
   with a different chunking strategy on the next refresh — closing the loop between retrieval and
@@ -147,10 +155,10 @@ flowchart LR
     G -->|all below,<br/>rewrites left| RW[Rewrite query<br/>maybe widen filter]
     G -->|all below,<br/>budget exhausted| FB[Build response<br/>low_confidence or exhausted]
     RW --> R
-    Gen --> CF{Faithful?}
-    CF -->|yes| OK[Build response<br/>status=ok]
-    CF -->|no, retry left| RW
-    CF -->|no, budget exhausted| FB
+    Gen --> CF{Re-grade<br/>faithful?<br/>answers query?}
+    CF -->|both pass| OK[Build response<br/>status=ok]
+    CF -->|fail, retry left| RW
+    CF -->|fail, budget exhausted| FB
     OK --> Out([Return to caller])
     FB --> Out
     classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
@@ -532,6 +540,20 @@ REST endpoints (versioned under `/v1`):
   `{ status, started_at, completed_at, result }`.
 - `GET /v1/health` — liveness check for the Update Trigger and any external monitoring.
 
+Two additional endpoints colocated under `/v1/` are added by [§9.8 Documentation Portal](#98-documentation-portal) for its Agent X-Ray drawer and Dashboard tab:
+
+- `GET /v1/streams/events?since_service_id=...&since_llm_id=...&module_prefix=...` — server-sent
+  events; merged tail of both the `service_logs` and `llm_calls` tables at `$AUDIT_DB_PATH`. Each
+  event is one JSON object carrying a `kind: "service" | "llm"` discriminator plus the row
+  columns; service rows contribute `{kind, id, module, level, timestamp, message}` and LLM rows
+  contribute `{kind, id, module, timestamp, started_at, latency_ms, model, request, response,
+  error, ...}`. The SSE id field is composite (`s:N` / `l:N`) so the browser's `EventSource`
+  resumes from the right cursor on reconnect. Cursors are independent per source table.
+- `GET /v1/metrics?service=...&since=...&until=...` — synchronous passthrough to the OTel
+  `get_metrics` tool ([§9.6](#96-audit-and-observability-module-6)); the portal's Dashboard
+  tab polls this on a 5s interval. Reads the OTel SQLite store directly since the orchestrator
+  has the same in-process access as the OTel MCP server.
+
 Auth and rate-limiting are out of POC scope but the endpoints are designed so adding them is a
 middleware change, not a contract change. The Portal authenticates with a simple API key for the
 POC; production deployments would swap to whatever the org's standard service auth is.
@@ -762,8 +784,9 @@ service:
 `mcp.status` (e.g., `ok`/`low_confidence`/`exhausted` for RAG retrieve), `mcp.latency_ms`, and
 `mcp.trace_id` propagated through MCP envelopes so a Portal query → Orchestrator → B&P → RAG chain
 shares one end-to-end trace. A `mcp.payload_summary` carries counts, IDs, and status — **not** raw
-queries or document content. Auto-RAG spans add rewrite count, grader scores, faithfulness
-pass/fail, and index-quality flags; ToT spans add branch count, depth reached, and winning score.
+queries or document content. Auto-RAG spans add rewrite count, grader scores, answer-re-grade
+pass/fail per axis (faithfulness, answerability), and index-quality flags; ToT spans add branch
+count, depth reached, and winning score.
 
 **Derived metrics.** The trace stream is the source of truth for:
 
@@ -795,9 +818,10 @@ continuously) and **offline metrics** that require labeling or sampling (slower,
 and the per-specialist doc indexes ([§9.5](#94-orchestrator-service-design)) without any external
 labeling:
 
-- **Faithfulness pass rate** — fraction of generated answers that pass the post-generation
-  faithfulness re-grade ([§9.1.3.1](#9131-autonomous-rag-loop)). Drops are an early signal of
-  hallucination drift in retrieval or in the answerer.
+- **Answer re-grade pass rate** — fraction of generated answers that clear the post-generation
+  re-grade ([§9.1.3.1](#9131-autonomous-rag-loop)), tracked per axis: **faithfulness** (drops
+  signal hallucination drift) and **answerability** (drops signal that the loop is generating
+  graceful refusals — usually a retrieval or grader gap).
 - **Escalation rate** — fraction of background dispatches that emit an SME-escalation envelope
   (already in [§9.6](#96-audit-and-observability-module-6)).
 - **Grader-fail rate** — fraction of Auto-RAG retrievals that fall through to rewrite or fallback
@@ -846,3 +870,100 @@ ones but slower to update:
 
 For POC scope (which metrics are wired up from day one, the LLM-as-judge cadence, and what is
 explicitly out of scope), see [Section 8.5](PROJECT_ARCHITECTURE.md#85-considerations-for-the-poc).
+
+### 9.8 Documentation Portal
+
+The Portal is the only user-facing surface
+([§8.2](PROJECT_ARCHITECTURE.md#82-high-level-architecture-diagram)). It hosts the chatbot
+that routes queries to the Orchestrator, the SME answer UI, and rendered views of the BP/SD
+pages the agent maintains. For the POC the rendered-views surface dominates — it's how
+leadership / developers / product see what the agent has produced — so the portal ships first
+as a thin viewer of the docs repo with three operator-facing surfaces (SME Answers, Dashboard,
+and an Agent X-Ray drawer) layered on top.
+
+#### 9.8.1 Stack and shape
+
+A single-page web app written in a modern Vue-based framework, talking to two backends:
+
+  * **GitHub** — the BP and SD tabs fetch directory listings + file contents directly from
+    the public docs repo (no PAT in the browser, no backend proxy). A future private
+    deployment swaps the direct fetch for an authenticated proxy on the orchestrator.
+  * **Orchestrator** ([§9.4](#94-orchestrator-service-design)) — every dynamic operator-facing
+    surface (queue list + reply, X-Ray streaming, Telemetry polling) is wired to the
+    Orchestrator REST API. CORS is enabled in dev so the portal and the API can run on
+    different origins; production deployments terminate both behind one origin.
+
+#### 9.8.2 Tabs and surfaces
+
+Two operator-workflow tabs on the left, one observability tab pinned to the right edge of the
+tab bar, and a collapsible right-side drawer on top:
+
+  * **Documentation** — directory tree of the docs repo's `documentation/` root, plus a
+    Markdown viewer for the selected file. The B&P and SD pages live as siblings under that
+    root (`documentation/bp/`, `documentation/sd/`), so a single tab covers both — operators
+    navigate into whichever subtree they care about and cross-references render as live links
+    inside the same view.
+  * **SME Answers** — paired list + reply form. The list shows pending escalations; selecting
+    one surfaces its topic, the originating page URI(s), the agent's best-guess, and the
+    retrieval trail snippet. The reply form fires the orchestrator's `ingest_sme_reply` flow
+    ([§9.5](#95-sme-interaction-module-6)). After a successful post, the question vanishes
+    from the pending list and a toast names the page(s) that got their placeholder block
+    replaced.
+  * **Dashboard** — pinned to the right of the tab bar. KPI tiles on top (total spans, error
+    rate, overall p95 latency, RAG low-confidence rate) followed by the §9.6-derived
+    breakdowns: per-(service, method) span counts, p50/p95 latency, status histograms, RAG
+    retrieve status distribution, and dispatch-outcome status histograms (escalation signal).
+    Polled on a short interval — charts re-render in place.
+  * **Agent X-Ray** *(right-side collapsible drawer, not a tab)* — toggled from a header
+    button. Subscribes to `GET /v1/streams/events`, the merged SSE feed of service-log
+    entries ([§9.6](#96-audit-and-observability-module-6) "service log") and LLM call records
+    ([§9.6](#96-audit-and-observability-module-6) "LLM call audit") — one combined console
+    pane, descending order. Each row carries a `kind` discriminator that drives per-row
+    formatting; clicking any row pops a dialog with the full text (service `message`, or LLM
+    `request` + `response` + optional `error`). The drawer mounts the SSE subscription only
+    while open so background traffic costs nothing.
+
+A **floating chat bubble** is mounted in the layout, visible from every tab. Open it, ask a
+question, and it routes through the orchestrator's query endpoint
+([§9.4.2](#942-apis-rest)). The default domain hint is `both`, overridable in a small
+dropdown for operators who know the question is BP- or SD-only. Answers render as Markdown
+with the cited sources listed beneath; failures surface inline as a red error message.
+
+#### 9.8.3 Branch selector
+
+A selector in the header (one level above the tabs, so it applies to whichever tab is active)
+exposes the canonical branches (`main`, `starting-point`) plus a free-text "custom branch"
+that accepts any ref name. The selected branch lives in a single piece of cross-tab UI state;
+the Documentation tab watches it and re-fetches on change. Agent X-Ray, Dashboard, and SME
+Answers ignore the branch since they read live runtime state, not git state.
+
+The selector is the operator's escape hatch: when an agent run goes wrong, they reset the
+repo to `starting-point` ([§8.5 reset flow](PROJECT_ARCHITECTURE.md#85-considerations-for-the-poc))
+and immediately flip the portal to that branch to confirm the rollback landed before the
+next refresh.
+
+#### 9.8.4 SSE event streaming
+
+The Agent X-Ray drawer subscribes to a single merged SSE feed
+(`GET /v1/streams/events` — see [§9.4.2](#942-apis-rest)) backed by a poll-and-emit cursor
+against both audit-DB tables. Per poll cycle the orchestrator queries `service_logs` and
+`llm_calls` for rows newer than each table's cursor, merges by timestamp, and emits each row
+as one event with a `kind` discriminator so the client can format per-row without
+subscribing to two separate streams. No long-polling, no LISTEN/NOTIFY — SQLite doesn't
+support either, and a low-frequency poll is more than fast enough for human-readable
+streaming.
+
+On disconnect the browser backs off and resumes from the last composite SSE id it saw
+(`s:N` for service rows, `l:N` for LLM rows), so a temporary network hiccup doesn't drop
+entries. The drawer mounts the EventSource only while open — closing it tears the
+subscription down so background traffic costs nothing.
+
+#### 9.8.5 Out of scope for the POC
+
+  * **Auth** — the portal binds to localhost and trusts everything. Production binds it
+    behind the org's standard SSO; that's a middleware change.
+  * **Multi-repo** — only the single docs repo is wired today. A future deployment with
+    multiple docs repos plugs the repo into the same cross-tab UI state next to the branch.
+  * **Production build** — only the dev-server boot is supported in the POC; bundling the
+    portal into a static asset served by the orchestrator works but isn't part of the
+    standard boot script.

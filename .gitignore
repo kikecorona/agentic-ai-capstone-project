@@ -220,4 +220,16 @@ __marimo__/
 # LangGraph
 .langgraph_api
 
+# Local SQLite stores generated at runtime by the POC services
+# (OTel span store, LLM call audit log, ad-hoc Chroma persistence dirs).
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite3-journal
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+implementation/data/
+
 

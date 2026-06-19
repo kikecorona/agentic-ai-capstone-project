@@ -1,0 +1,142 @@
+<template>
+  <!--
+    §9.8.4 Agent X-Ray.
+    Two SSE streams (service log + LLM call log) rendered side-by-side
+    in console-style panes. Pause toggle, auto-scroll, level filter.
+  -->
+  <q-page class="x-ray-page q-pa-md column no-wrap">
+    <q-toolbar class="bg-grey-9 text-white q-mb-sm rounded-borders">
+      <q-icon :name="paused ? 'pause' : 'play_arrow'" class="q-mr-sm" />
+      <span class="retro-display">Agent X-Ray</span>
+      <q-space />
+      <q-btn
+        flat
+        dense
+        :icon="paused ? 'play_arrow' : 'pause'"
+        :label="paused ? 'resume' : 'pause'"
+        @click="togglePause"
+      />
+      <q-btn flat dense icon="clear_all" label="clear" @click="clear" />
+    </q-toolbar>
+
+    <div class="row no-wrap q-col-gutter-md col">
+      <log-console
+        class="col-6"
+        title="service log"
+        :events="serviceEvents"
+        :status="serviceStatus"
+        kind="service"
+      />
+      <log-console
+        class="col-6"
+        title="LLM calls"
+        :events="llmEvents"
+        :status="llmStatus"
+        kind="llm"
+      />
+    </div>
+  </q-page>
+</template>
+
+<script setup>
+import { inject, onBeforeUnmount, ref } from "vue";
+import LogConsole from "components/LogConsole.vue";
+
+const ocBase = inject("ocBase", "http://127.0.0.1:8000");
+
+const serviceEvents = ref([]);
+const llmEvents = ref([]);
+const serviceStatus = ref("connecting…");
+const llmStatus = ref("connecting…");
+
+const paused = ref(false);
+
+const MAX_BUFFER = 500;
+
+let serviceSrc = null;
+let llmSrc = null;
+
+function openStream(path, eventsRef, statusRef) {
+  // EventSource with the orchestrator endpoint. The browser
+  // auto-reconnects on transient failure; we surface state.
+  const url = `${ocBase}${path}?since_id=0`;
+  console.info(`[XRay] opening SSE → ${url}`);
+  const src = new EventSource(url);
+  statusRef.value = "connecting…";
+  src.onopen = () => {
+    console.info(`[XRay] ${path} opened (readyState=${src.readyState})`);
+    statusRef.value = "live";
+  };
+  src.onerror = (e) => {
+    console.warn(
+      `[XRay] ${path} error (readyState=${src.readyState})`,
+      e,
+    );
+    statusRef.value = "reconnecting…";
+  };
+  src.onmessage = (ev) => {
+    if (paused.value) return;
+    try {
+      const obj = JSON.parse(ev.data);
+      eventsRef.value.push(obj);
+      if (eventsRef.value.length > MAX_BUFFER) {
+        eventsRef.value.splice(0, eventsRef.value.length - MAX_BUFFER);
+      }
+    } catch (err) {
+      console.error(
+        `[XRay] ${path} parse failed:`,
+        err,
+        "data:",
+        ev.data,
+      );
+    }
+  };
+  return src;
+}
+
+function start() {
+  serviceSrc = openStream("/v1/streams/service-logs", serviceEvents, serviceStatus);
+  llmSrc = openStream("/v1/streams/llm-calls", llmEvents, llmStatus);
+}
+
+function stop() {
+  if (serviceSrc) {
+    serviceSrc.close();
+    serviceSrc = null;
+  }
+  if (llmSrc) {
+    llmSrc.close();
+    llmSrc = null;
+  }
+  serviceStatus.value = "paused";
+  llmStatus.value = "paused";
+}
+
+function togglePause() {
+  paused.value = !paused.value;
+  if (paused.value) {
+    stop();
+  } else {
+    start();
+  }
+}
+
+function clear() {
+  serviceEvents.value = [];
+  llmEvents.value = [];
+}
+
+start();
+onBeforeUnmount(stop);
+</script>
+
+<style lang="scss" scoped>
+.x-ray-page {
+  height: calc(100vh - 160px);
+}
+.retro-display {
+  font-family: "VT323", "JetBrains Mono", monospace;
+  font-size: 1.15rem;
+  letter-spacing: 0.05em;
+}
+</style>

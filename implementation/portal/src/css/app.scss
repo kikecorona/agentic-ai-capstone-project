@@ -1,0 +1,10 @@
+// src/css/app.scss
+// Project-wide rules — kept minimal so the retro skin in retro.scss
+// can override Quasar variables freely.
+
+html,
+body,
+#q-app {
+  height: 100%;
+  margin: 0;
+}

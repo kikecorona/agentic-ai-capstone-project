@@ -1,0 +1,320 @@
+"""Compose a B&P page from a normalised input doc + cross-references.
+
+The output of every refresh is a Markdown page that lives in the BP
+folder of the docs repo (§8.5 page storage). Per §9.3 the page must:
+
+  * be a *generated* product/feature page derived from the org's input
+    docs (not just a verbatim copy);
+  * carry **inline cross-references** to SD pages — relative Markdown
+    links resolved through the SD MCP at write time;
+  * include **fenced placeholder blocks** (§9.5.1 format) for any
+    cross-reference SD couldn't resolve, so the gap is visible to readers
+    and machine-locatable for the orchestrator's ``patch_page`` step.
+
+Composition has three concerns:
+
+  1. **Service candidates** — which services does the input doc imply?
+     Driven by an LLM pass on the doc; keyword fallback when the LLM is
+     unreachable so the rest of the pipeline still produces *something*.
+  2. **Cross-reference resolution** — for each candidate, ask the SD MCP
+     for the canonical service. Resolved → inline link. Unresolved →
+     fenced placeholder + an escalation envelope returned upstream.
+  3. **Markdown render** — title, body, "Related services" section,
+     placeholder blocks at the bottom. Deterministic so two consecutive
+     refreshes over the same input + SD state produce identical output
+     (clean Git diffs).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from src.shared.llm import get_chat_llm
+from src.shared.service_log import get_logger
+
+from .clients import SDClient
+
+log = get_logger("rag.bp.compose")
+
+
+# ---------------------------------------------------------------------------
+# Service candidate extraction
+# ---------------------------------------------------------------------------
+
+# Cheap regex fallback used when the LLM is unreachable or returns garbage.
+# Matches plain ``foo-service`` or ``foo_service`` tokens anywhere in the doc.
+_SERVICE_RX = re.compile(r"\b([a-z][a-z0-9]+(?:[-_][a-z0-9]+)*-service)\b", re.IGNORECASE)
+
+
+def extract_service_candidates(doc: str, *, fallback_only: bool = False) -> list[str]:
+    """Return a deduped list of plausible service names mentioned in the doc.
+
+    LLM-first because the input docs are written by humans and use
+    arbitrary naming; regex-fallback so the pipeline never blocks on an
+    Ollama hiccup.
+    """
+    fallback = sorted({m.group(1).lower() for m in _SERVICE_RX.finditer(doc)})
+    if fallback_only:
+        return fallback
+
+    llm = get_chat_llm("rag.bp.compose.service_candidates", temperature=0.0, json_mode=True)
+    prompt = (
+        "Read the document below and produce a JSON object with a single key "
+        "'services' whose value is a list of every backend service name the "
+        "document mentions or implies. Use the canonical kebab-case form, "
+        "e.g. 'billing-service'. If you cannot find any, return an empty list.\n\n"
+        "Return ONLY: {\"services\": [\"...\"]}\n\n"
+        f"DOCUMENT:\n{doc}"
+    )
+    try:
+        msg = llm.invoke([SystemMessage(content="You extract canonical service references."), HumanMessage(content=prompt)])
+        data = json.loads(msg.content if isinstance(msg.content, str) else str(msg.content))
+        names = [str(s).strip().lower() for s in data.get("services", []) if str(s).strip()]
+        # Always merge in the regex fallback so a too-conservative LLM can't
+        # silently drop a service that's clearly named in the source.
+        merged = sorted(set(names) | set(fallback))
+        return merged
+    except Exception as exc:  # noqa: BLE001 — never crash compose on LLM hiccup
+        log.error(f"service candidate extraction failed, falling back to regex: {exc}")
+        return fallback
+
+
+# ---------------------------------------------------------------------------
+# Cross-reference resolution
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ResolvedReference:
+    """Result of asking SD about one product/service candidate."""
+    candidate: str
+    resolved: bool
+    page_uri: str | None = None     # populated when resolved=True
+    role: str | None = None
+    note: str | None = None         # populated when resolved=False (escalation reason)
+
+
+def resolve_sd_links(*, product_id: str | None, candidates: list[str], sd: SDClient) -> list[ResolvedReference]:
+    """Resolve each candidate against the SD MCP.
+
+    Two strategies:
+      * **By product** — if the BP page maps to a known ``product_id``,
+        ask SD ``find_services_for_product(product_id)`` once and merge
+        with the candidate list.
+      * **By name** — for any candidate not covered by the product
+        lookup, do a per-name resolution through ``get_page`` (or the
+        future SD-side name resolver) and fall back to escalation if SD
+        has no record.
+    """
+    by_service: dict[str, dict[str, Any]] = {}
+    if product_id:
+        try:
+            for entry in sd.find_services_for_product(product_id) or []:
+                svc = entry.get("service")
+                if svc:
+                    by_service[str(svc).lower()] = entry
+        except Exception as exc:  # noqa: BLE001
+            log.error(f"resolve_sd_links: find_services_for_product({product_id!r}) failed: {exc}")
+
+    out: list[ResolvedReference] = []
+    seen: set[str] = set()
+    for cand in candidates:
+        key = cand.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        match = by_service.get(key)
+        if match:
+            out.append(ResolvedReference(
+                candidate=cand,
+                resolved=True,
+                page_uri=match.get("page_uri"),
+                role=match.get("role"),
+            ))
+            continue
+        # Unresolved through the product lookup — try get_page for an SD page
+        # named after the service. SD will eventually expose a name resolver;
+        # for the POC we just record the gap.
+        out.append(ResolvedReference(
+            candidate=cand,
+            resolved=False,
+            note=f"SD has no entry for {cand!r}",
+        ))
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Page render
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PageEscalation:
+    """An unresolved gap that becomes an SME escalation envelope."""
+    question_id: str
+    placeholder_id: str
+    topic: str
+    question: str
+    best_guess: str | None
+    page_uri: str
+
+
+@dataclass
+class ComposedPage:
+    page_uri: str
+    title: str
+    content: str
+    referenced_services: list[str]
+    open_placeholders: list[str]
+    escalations: list[PageEscalation] = field(default_factory=list)
+
+
+def render_placeholder_block(esc: PageEscalation, *, asked_at: float) -> str:
+    """Render a §9.5.1 placeholder block. The HTML-comment fences carry
+    the ``question_id`` so the orchestrator's ``patch_page`` step can find
+    and replace the block deterministically."""
+    asked = time.strftime("%Y-%m-%d", time.gmtime(asked_at))
+    best = esc.best_guess or "(none)"
+    return (
+        f"<!-- SME-PLACEHOLDER:{esc.question_id} START -->\n"
+        f"> ⏳ **Waiting for SME** — *Topic:* {esc.topic}\n"
+        f">\n"
+        f"> *Question:* {esc.question}\n"
+        f"> *Best guess (low-confidence):* {best}\n"
+        f"> *Asked:* on {asked} · *Status:* pending · *Question ID:* `{esc.question_id}`\n"
+        f"<!-- SME-PLACEHOLDER:{esc.question_id} END -->"
+    )
+
+
+def compose_page(
+    *,
+    page_uri: str,
+    title: str | None,
+    source_uri: str,
+    body: str,
+    references: list[ResolvedReference],
+    last_updated: float,
+    content_hash: str,
+) -> ComposedPage:
+    """Render the BP page Markdown.
+
+    The page has four sections:
+
+      1. **Front matter** — title, generation banner, source pointer.
+      2. **Body** — the normalised input doc verbatim. Keeping the body
+         verbatim (rather than re-summarising) makes the audit obvious:
+         what the agent published is what the org wrote, plus annotations.
+      3. **Related services** — resolved SD links.
+      4. **Open placeholders** — fenced blocks for unresolved references.
+    """
+    title = title or page_uri.rsplit("/", 1)[-1]
+
+    resolved = [r for r in references if r.resolved]
+    unresolved = [r for r in references if not r.resolved]
+
+    referenced_services = sorted({r.candidate for r in resolved})
+
+    # Build escalations + placeholder blocks for every unresolved reference.
+    escalations: list[PageEscalation] = []
+    placeholder_blocks: list[str] = []
+    open_placeholders: list[str] = []
+    asked_at = last_updated
+    for i, ref in enumerate(unresolved):
+        qid = _question_id(page_uri=page_uri, candidate=ref.candidate, asked_at=asked_at, ordinal=i)
+        esc = PageEscalation(
+            question_id=qid,
+            placeholder_id=qid,
+            topic=f"Cross-reference to {ref.candidate}",
+            question=(
+                f"Does the service `{ref.candidate}` exist in System Design? "
+                f"If so, which page documents it?"
+            ),
+            best_guess=ref.note,
+            page_uri=page_uri,
+        )
+        escalations.append(esc)
+        placeholder_blocks.append(render_placeholder_block(esc, asked_at=asked_at))
+        open_placeholders.append(qid)
+
+    # Render markdown.
+    parts: list[str] = []
+    parts.append(f"# {title}\n")
+    parts.append(
+        f"> *Auto-generated B&P page.* Source: `{source_uri}` · content hash "
+        f"`{content_hash[:12]}` · last updated "
+        f"{time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(last_updated))}.\n"
+    )
+    parts.append("## Overview\n")
+    parts.append(body.strip() + "\n")
+
+    parts.append("## Related services\n")
+    if resolved:
+        for r in resolved:
+            link = r.page_uri or ""
+            label = f"`{r.candidate}`"
+            role = f" — {r.role}" if r.role else ""
+            if link:
+                # Cross-domain links land at /sd/... in the docs repo; we keep
+                # them relative so they survive a clone or repo move.
+                parts.append(f"- [{label}](../../{link}){role}\n")
+            else:
+                parts.append(f"- {label}{role}\n")
+    else:
+        parts.append("_None resolved through SD at this time._\n")
+
+    if placeholder_blocks:
+        parts.append("\n## Open questions\n")
+        parts.extend(b + "\n" for b in placeholder_blocks)
+
+    content = "\n".join(parts).rstrip() + "\n"
+
+    return ComposedPage(
+        page_uri=page_uri,
+        title=title,
+        content=content,
+        referenced_services=referenced_services,
+        open_placeholders=open_placeholders,
+        escalations=escalations,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Placeholder replacement (used by patch_page)
+# ---------------------------------------------------------------------------
+
+_FENCE_RX_TPL = (
+    r"<!--\s*SME-PLACEHOLDER:{qid}\s+START\s*-->"
+    r".*?"
+    r"<!--\s*SME-PLACEHOLDER:{qid}\s+END\s*-->"
+)
+
+
+def replace_placeholder_block(content: str, *, question_id: str, replacement: str) -> tuple[str, bool]:
+    """Find the fenced ``SME-PLACEHOLDER:question_id`` block and replace it.
+
+    Returns ``(new_content, replaced)``; ``replaced=False`` means the
+    fence wasn't found, so the orchestrator can flag a stale entry.
+    """
+    pattern = re.compile(_FENCE_RX_TPL.format(qid=re.escape(question_id)), re.DOTALL)
+    new_content, n = pattern.subn(replacement.rstrip() + "\n", content, count=1)
+    return new_content, n > 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _question_id(*, page_uri: str, candidate: str, asked_at: float, ordinal: int) -> str:
+    """Stable-ish ``question_id`` for placeholder blocks.
+
+    Same page + same candidate produce the same id within a refresh
+    cycle, which keeps Git diffs sane when only metadata changed.
+    """
+    date = time.strftime("%Y-%m-%d", time.gmtime(asked_at))
+    slug = re.sub(r"[^a-z0-9]+", "-", candidate.lower()).strip("-")
+    return f"Q-{date}-{slug}-{ordinal:03d}"

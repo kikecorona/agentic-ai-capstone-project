@@ -1,0 +1,74 @@
+{
+  "name": "@quasar/vite-plugin",
+  "version": "1.12.0",
+  "description": "Vite plugin for Quasar Framework",
+  "keywords": [
+    "quasar",
+    "vite",
+    "vite-plugin",
+    "vue",
+    "vuejs"
+  ],
+  "homepage": "https://quasar.dev",
+  "bugs": "https://github.com/quasarframework/quasar/issues",
+  "license": "MIT",
+  "author": {
+    "name": "Razvan Stoenescu",
+    "email": "razvan.stoenescu@gmail.com",
+    "url": "https://github.com/quasarframework"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/quasarframework/quasar"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://donate.quasar.dev"
+  },
+  "files": [
+    "dist",
+    "src",
+    "index.d.ts"
+  ],
+  "type": "module",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./src/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./*": "./*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@vue/test-utils": "^2.4.10",
+    "fs-extra": "^11.3.5",
+    "jsdom": "29.1.1",
+    "pug": "^3.0.4",
+    "rolldown": "^1.0.2",
+    "vite": "^8.0.14",
+    "vitest": "^4.1.7",
+    "vue": "^3.5.34",
+    "quasar": "2.19.3"
+  },
+  "peerDependencies": {
+    "@vitejs/plugin-vue": "^2.0.0 || ^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.5",
+    "quasar": "^2.16.0",
+    "vite": "^2.0.0 || ^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0",
+    "vue": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "cd ./playground && pnpm dev",
+    "build": "node ./build/clean.js && rolldown --config ./build/rolldown.config.js",
+    "test": "pnpm test:usage && pnpm test:runtime",
+    "test:watch": "vitest run --watch --config ./testing/runtime/vitest.config.js",
+    "test:usage": "vitest run --config ./testing/usage/vitest.config.js",
+    "test:runtime": "vitest run --config ./testing/runtime/vitest.config.js"
+  }
+}
