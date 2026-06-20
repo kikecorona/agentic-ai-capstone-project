@@ -454,6 +454,13 @@ a single Markdown section for a B&P page. Constraints:
 
 * Output ONLY the section body. Do NOT include the heading; the caller
   prepends `## <section_title>` itself.
+* Start with the substantive content. Do NOT begin with phrases like
+  "Based on the SD summary", "Here are the", "According to", "The
+  provided summary indicates", or any similar framing — the reader
+  sees the body inline in the page, not as a chat reply.
+* Do NOT end with meta-commentary ("Note that the summary does not
+  mention...", "It is worth noting that..."). Either include the fact
+  in the body or omit it.
 * Use ONLY facts from the SD summary. Don't invent services, products,
   or relationships. If the summary doesn't cover the section, write
   what you can and explicitly note "(further detail TBD — not in SD

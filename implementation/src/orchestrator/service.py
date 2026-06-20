@@ -185,6 +185,27 @@ class OrchestratorService:
                     results.append({"specialist": "sd", **sd_resp})
 
             merged = _merge_query_results(results, target)
+            # Final polish pass — strip hedges / speculation / meta-
+            # commentary the local LLM tends to leave behind in the
+            # specialist answers ("further detail TBD", "appears to
+            # be...", "according to [S1]") so the chat reads
+            # confidently without inventing facts. Best-effort:
+            # failure here falls back to the un-polished answer
+            # rather than blanking the response.
+            if merged.answer and merged.status == "ok":
+                try:
+                    polished = _polish_chat_answer(merged.answer, query)
+                    if polished:
+                        merged = QueryResult(
+                            status=merged.status,
+                            answer=polished,
+                            sources=merged.sources,
+                            retrieval_trail=merged.retrieval_trail,
+                            cross_references=merged.cross_references,
+                            dispatched_to=merged.dispatched_to,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    log.warn(f"polish_chat_answer failed (non-fatal): {exc}")
             span.set_status(merged.status)
             span.set_payload_summary({
                 "specialists": [r["specialist"] for r in results],
@@ -502,7 +523,13 @@ def _merge_query_results(results: list[dict[str, Any]], target: DispatchTarget) 
 
     With one specialist the merge is a passthrough. With two we
     concatenate sources/cross-refs and pick the strongest status
-    (``ok`` > ``low_confidence`` > ``exhausted``)."""
+    (``ok`` > ``low_confidence`` > ``exhausted``).
+
+    **Dedupe pass.** When both specialists return substantively the
+    same answer text we collapse the two into a single response with
+    a ``From: BP + SD`` lead instead of repeating the same prose
+    twice. Sources are deduped by ``(source_uri, domain)`` so a chunk
+    surfaced by both retrievals shows up once."""
     if not results:
         return QueryResult(
             status="exhausted",
@@ -517,7 +544,7 @@ def _merge_query_results(results: list[dict[str, Any]], target: DispatchTarget) 
         return QueryResult(
             status=str(r.get("status", "exhausted")),
             answer=r.get("answer"),
-            sources=list(r.get("sources") or []),
+            sources=_dedupe_sources(r.get("sources") or []),
             retrieval_trail=list(r.get("retrieval_trail") or []),
             cross_references=list(r.get("cross_references") or []),
             dispatched_to=target.label,
@@ -527,20 +554,101 @@ def _merge_query_results(results: list[dict[str, Any]], target: DispatchTarget) 
     rank = {"ok": 0, "low_confidence": 1, "exhausted": 2, "error": 3}
     results.sort(key=lambda r: rank.get(str(r.get("status", "exhausted")), 99))
     primary = results[0]
-    answer_parts = [
-        f"From {r['specialist'].upper()}: {r.get('answer')}"
+
+    answers_with_specialist = [
+        (r["specialist"], (r.get("answer") or "").strip())
         for r in results
-        if r.get("answer")
+        if (r.get("answer") or "").strip()
     ]
-    answer = "\n\n".join(answer_parts) if answer_parts else None
+    if len(answers_with_specialist) >= 2 and _answers_equivalent(
+        answers_with_specialist[0][1], answers_with_specialist[1][1]
+    ):
+        # Same content from both — name both contributors but emit the
+        # text once. Pick the longer of the two so we don't truncate.
+        body = max((a for _, a in answers_with_specialist), key=len)
+        names = " + ".join(s.upper() for s, _ in answers_with_specialist)
+        answer = f"From {names}: {body}"
+    else:
+        parts = [
+            f"From {s.upper()}: {a}"
+            for s, a in answers_with_specialist
+        ]
+        answer = "\n\n".join(parts) if parts else None
+
     return QueryResult(
         status=str(primary.get("status", "exhausted")),
         answer=answer,
-        sources=[s for r in results for s in (r.get("sources") or [])],
+        sources=_dedupe_sources(s for r in results for s in (r.get("sources") or [])),
         retrieval_trail=[t for r in results for t in (r.get("retrieval_trail") or [])],
         cross_references=[x for r in results for x in (r.get("cross_references") or [])],
         dispatched_to=target.label,
     )
+
+
+def _answers_equivalent(a: str, b: str) -> bool:
+    """Heuristic equality between two specialist answers.
+
+    Local LLMs often produce near-identical responses for both BP and
+    SD legs of the same query — same prose with one word swapped, or
+    one specialist returning a strict subset of the other's text.
+    Comparing normalised character sets catches both: collapse
+    whitespace, lowercase, strip punctuation, then check whether
+    either string contains the other (substring) OR both share enough
+    tokens that the smaller one is ≥85% covered.
+    """
+    na, nb = _normalise_for_compare(a), _normalise_for_compare(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    # Substring containment — the case where one specialist's answer
+    # is a subset of the other's prose.
+    if na in nb or nb in na:
+        return True
+    # Token overlap — fall back for paraphrased-but-equivalent prose.
+    ta, tb = set(na.split()), set(nb.split())
+    if not ta or not tb:
+        return False
+    smaller = ta if len(ta) <= len(tb) else tb
+    overlap = len(ta & tb) / len(smaller)
+    return overlap >= 0.85
+
+
+def _normalise_for_compare(s: str) -> str:
+    """Strip whitespace, casing, and punctuation for the equivalence
+    check. Keeps alphanumerics and single spaces."""
+    if not s:
+        return ""
+    out: list[str] = []
+    last_space = True
+    for ch in s.lower():
+        if ch.isalnum():
+            out.append(ch)
+            last_space = False
+        elif ch.isspace() or not ch.isascii() or ch in "-_./()[]{}<>:,;\"'`*#~|":
+            if not last_space:
+                out.append(" ")
+                last_space = True
+    return "".join(out).strip()
+
+
+def _dedupe_sources(sources) -> list[dict[str, Any]]:
+    """Return a stable-ordered list with each ``(source_uri, domain)``
+    appearing at most once. The first occurrence wins (so the
+    BP-leg copy is kept when both specialists name the same chunk),
+    and the relative order across specialists is preserved.
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for s in sources or []:
+        if not isinstance(s, dict):
+            continue
+        key = (str(s.get("source_uri") or ""), str(s.get("domain") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
 
 
 def _tag_details(details: list[dict[str, Any]], specialist: str) -> list[dict[str, Any]]:
@@ -550,3 +658,90 @@ def _tag_details(details: list[dict[str, Any]], specialist: str) -> list[dict[st
         item.setdefault("specialist", specialist)
         out.append(item)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Chat-answer polish
+# ---------------------------------------------------------------------------
+
+_POLISH_CHAT_SYSTEM = """\
+You are an editor for an internal documentation chatbot. Rewrite the
+DRAFT answer to be tight, professional, and confident — using ONLY
+facts already in the draft. Do not invent or extrapolate.
+
+Cuts:
+* Hedges and speculation: "further detail TBD", "appears to be",
+  "seems to suggest", "implies that there may be", "a possible
+  candidate", "could be used for", "may be a need for", "according
+  to [S1]", "[S1] indicates that".
+* Meta-commentary about the documentation: "the sources do not
+  provide...", "no explicit discussion of...", "it is worth noting
+  that the docs don't mention...".
+* Speculative paragraphs that propose options the draft is unsure
+  about — drop them entirely instead of softening them.
+* Restatements — say each fact once.
+* Inline citation markers like [S1], [S2], [S1, S2], (S1), (S1)(S2).
+  The chat UI lists the sources beneath the answer, so the markers
+  are noise inside the prose. Remove them whether they appear at
+  the end of a sentence, inside a bullet, or as a trailing block.
+
+Keep:
+* Concrete facts asserted in the draft.
+* Markdown formatting (bullets, tables, code blocks).
+* The "From BP + SD: " / "From BP: " / "From SD: " lead-in if it
+  starts the draft.
+
+If after the cuts there is no substantive content left, return the
+single line "(no grounded answer available — refresh the docs and
+try again)".
+
+Output the rewritten answer only. No preamble, no postamble.
+"""
+
+
+def _polish_chat_answer(answer: str, query: str) -> str:
+    """Run the merged chat answer through a final editor pass that
+    strips hedges, speculation, meta-commentary, and the inline
+    [S1] / [S2] citation markers (the chat UI lists sources
+    separately) while preserving facts and Markdown structure.
+    Local LLMs (llama3.1:8b) tend to leave "further detail TBD" and
+    "according to [S1]" droppings in the auto-RAG answer; this pass
+    cleans them up.
+
+    Best-effort — caller catches and falls back to the un-polished
+    answer on any failure.
+    """
+    import re
+
+    from langchain_core.messages import HumanMessage, SystemMessage  # local import
+
+    from src.shared.llm import get_chat_llm  # local import — only the chat path needs it
+
+    if not answer or not answer.strip():
+        return answer
+    llm = get_chat_llm(
+        module="orchestrator.chat.polish",
+        temperature=0.0,
+        json_mode=False,
+    )
+    msg = llm.invoke([
+        SystemMessage(content=_POLISH_CHAT_SYSTEM),
+        HumanMessage(content=f"QUERY: {query}\n\nDRAFT:\n{answer}"),
+    ])
+    out = (msg.content if hasattr(msg, "content") else str(msg)) or ""
+    out = out.strip() if isinstance(out, str) else str(out).strip()
+    # Belt-and-suspenders: the model is supposed to drop citation
+    # markers, but local LLMs sometimes miss them — strip
+    # ``[S1]`` / ``[S1, S2]`` / ``(S1)`` / ``[S 1]`` etc.
+    # deterministically after the rewrite. Whitespace cleanup picks
+    # up the gaps the strip leaves behind.
+    if out:
+        out = re.sub(r"[\[(]\s*S\s*\d+(?:\s*[,;]\s*S?\s*\d+)*\s*[\])]", "", out)
+        out = re.sub(r" +([.,;:!?])", r"\1", out)  # space-before-punctuation
+        out = re.sub(r"[ \t]{2,}", " ", out)        # collapse double-spaces left by strip
+        out = re.sub(r"[ \t]+\n", "\n", out)        # trailing line whitespace
+        out = re.sub(r"\n{3,}", "\n\n", out)        # collapse blank-line runs
+        out = out.strip()
+    # Treat empty / whitespace-only output as a polish failure and
+    # keep the original draft so we never blank a real answer.
+    return out or answer

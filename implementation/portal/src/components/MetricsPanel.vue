@@ -131,6 +131,12 @@ const maxLatency = computed(() =>
   align-items: center;
   gap: 0.5rem;
 }
+// Latency rows render `p50 / p95` in the right-hand numbers column;
+// give it more breathing room so values like ``1234 / 5678`` don't
+// crowd against the bar.
+.lat-row {
+  grid-template-columns: 220px 1fr 125px;
+}
 .bar-key {
   white-space: nowrap;
   overflow: hidden;
@@ -190,6 +196,16 @@ const maxLatency = computed(() =>
   color: #fff;
   letter-spacing: 0.04em;
   overflow: hidden;
+  // Floor every segment at a width that fits "<status> <count>" so a
+  // low-count outcome (e.g. one ``escalated_only`` page among many
+  // ``enriched`` pages) doesn't shrink to a sliver and clip its label.
+  // The track's ``overflow: hidden`` still bounds the row when the
+  // floor would push the total past the available width.
+  min-width: 110px;
+  // Default background so an unrecognised status (one we haven't
+  // styled below) is still visible against the panel rather than
+  // rendering transparent.
+  background: #455a64;
 }
 .status-ok {
   background: #2e7d32;
@@ -201,13 +217,39 @@ const maxLatency = computed(() =>
 .status-exhausted {
   background: #c62828;
 }
-.status-error {
+.status-error,
+.status-failed {
   background: #6a1b9a;
 }
-.status-not_found {
+.status-not_found,
+.status-page_deleted {
   background: #455a64;
 }
 .status-unset {
   background: #444;
+}
+// Enrichment-pipeline outcomes (bp_service.enrich_page /
+// sd_service.enrich_page).
+.status-enriched {
+  background: #1565c0;
+}
+.status-unchanged {
+  background: #616161;
+}
+.status-escalated_only,
+.status-escalation,
+.status-escalations_emitted {
+  background: #ef6c00;
+}
+.status-stub_created {
+  background: #00796b;
+}
+// Async task lifecycle (orchestrator /v1/tasks).
+.status-accepted,
+.status-in_progress {
+  background: #5e35b1;
+}
+.status-completed {
+  background: #2e7d32;
 }
 </style>

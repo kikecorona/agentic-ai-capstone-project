@@ -454,6 +454,16 @@ def build_app(
         except Exception as exc:  # noqa: BLE001
             out["llm"] = {"by_module": {}, "overall": {}, "error": str(exc)}
 
+        # Agent-quality aggregates derived from the BP/SD doc-indexes
+        # plus the orchestrator's pending_sme_questions table.
+        # Coverage / freshness / open-placeholder rate / SME resolution
+        # time were all "pending" cards on the Dashboard until now —
+        # the data was already on disk, just unsurfaced.
+        try:
+            out["agent"] = _agent_quality_rollup()
+        except Exception as exc:  # noqa: BLE001
+            out["agent"] = {"error": str(exc)}
+
         return out
 
     return app
@@ -461,6 +471,153 @@ def build_app(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _agent_quality_rollup() -> dict[str, Any]:
+    """Aggregate the §9.7 agent-quality metrics that are derivable
+    from on-disk state without an extra round-trip:
+
+      * **coverage** — for each domain, fraction of cross-referenced
+        entities (referenced_products on SD pages, referenced_services
+        on BP pages) that have a peer page covering them.
+      * **freshness** — median seconds since last refresh per domain
+        plus a stale-rate (% pages older than 24h).
+      * **open_placeholder_rate** — % pages with at least one
+        ``SME-PLACEHOLDER`` block still open.
+      * **sme_resolution_time** — median / p95 of
+        ``answered_at - posted_at`` over answered questions.
+
+    Each section catches its own exceptions so a single corrupt DB
+    doesn't blank the rest of the rollup.
+    """
+    import time as _time
+
+    from src.bp_service.store import BPDocIndex, default_db_path as _bp_default
+    from src.sd_service.store import SDDocIndex, default_db_path as _sd_default
+    from .state import OrchestratorState, default_db_path as _oc_default
+
+    now = _time.time()
+    out: dict[str, Any] = {
+        "coverage": {},
+        "freshness": {},
+        "open_placeholder_rate": {},
+        "sme_resolution_time": {},
+    }
+
+    bp_pages: list[Any] = []
+    sd_pages: list[Any] = []
+
+    try:
+        bp_db = os.environ.get("BP_DB_PATH", str(_bp_default()))
+        bp_pages = BPDocIndex(bp_db).list_all() if Path(bp_db).exists() else []
+    except Exception as exc:  # noqa: BLE001
+        out["coverage"]["bp_error"] = str(exc)
+    try:
+        sd_db = os.environ.get("SD_DB_PATH", str(_sd_default()))
+        sd_pages = SDDocIndex(sd_db).list_all() if Path(sd_db).exists() else []
+    except Exception as exc:  # noqa: BLE001
+        out["coverage"]["sd_error"] = str(exc)
+
+    # ---- coverage --------------------------------------------------------
+    # SD coverage = fraction of SD-referenced services that BP also covers
+    # (a BP page name resolves to one of SD's referenced products), and
+    # symmetrically for BP coverage. We compare URI tails so the
+    # ``documentation/{bp,sd}/`` prefix doesn't poison the join.
+    bp_uris = {_strip_doc_prefix(p.page_uri) for p in bp_pages}
+    sd_uris = {_strip_doc_prefix(p.page_uri) for p in sd_pages}
+
+    refs_from_sd: set[str] = set()
+    for p in sd_pages:
+        refs_from_sd.update(_strip_doc_prefix(r) for r in (p.referenced_products or []))
+    refs_from_bp: set[str] = set()
+    for p in bp_pages:
+        refs_from_bp.update(_strip_doc_prefix(r) for r in (getattr(p, "referenced_services", None) or []))
+
+    if refs_from_sd:
+        bp_hits = sum(1 for r in refs_from_sd if r in bp_uris)
+        out["coverage"]["bp"] = {
+            "ratio": bp_hits / len(refs_from_sd),
+            "covered": bp_hits,
+            "expected": len(refs_from_sd),
+        }
+    if refs_from_bp:
+        sd_hits = sum(1 for r in refs_from_bp if r in sd_uris)
+        out["coverage"]["sd"] = {
+            "ratio": sd_hits / len(refs_from_bp),
+            "covered": sd_hits,
+            "expected": len(refs_from_bp),
+        }
+
+    # ---- freshness -------------------------------------------------------
+    STALE_S = 24 * 3600  # 24h cutoff
+    for label, pages in (("bp", bp_pages), ("sd", sd_pages)):
+        if not pages:
+            continue
+        ages = sorted(now - float(p.last_updated) for p in pages if p.last_updated)
+        if not ages:
+            continue
+        stale = sum(1 for a in ages if a > STALE_S)
+        out["freshness"][label] = {
+            "count": len(ages),
+            "median_age_s": ages[len(ages) // 2],
+            "stale_count": stale,
+            "stale_ratio": stale / len(ages),
+        }
+
+    # ---- open_placeholder_rate ------------------------------------------
+    for label, pages in (("bp", bp_pages), ("sd", sd_pages)):
+        if not pages:
+            continue
+        with_open = sum(1 for p in pages if (p.open_placeholders or []))
+        out["open_placeholder_rate"][label] = {
+            "count_with_open": with_open,
+            "total_pages": len(pages),
+            "ratio": (with_open / len(pages)) if pages else 0,
+        }
+
+    # ---- sme_resolution_time --------------------------------------------
+    try:
+        oc_db = os.environ.get("OC_DB_PATH", str(_oc_default()))
+        oc_state = OrchestratorState(oc_db) if Path(oc_db).exists() else None
+        if oc_state is not None:
+            answered = oc_state.list_questions(answered=True, limit=10_000)
+            pending = oc_state.list_questions(pending=True, limit=10_000)
+            durations = sorted(
+                (q.answered_at - q.posted_at)
+                for q in answered
+                if q.answered_at and q.posted_at and q.answered_at >= q.posted_at
+            )
+            if durations:
+                out["sme_resolution_time"] = {
+                    "median_s": durations[len(durations) // 2],
+                    "p95_s": durations[min(len(durations) - 1, int(0.95 * len(durations)))],
+                    "answered": len(durations),
+                    "pending": len(pending),
+                }
+            else:
+                out["sme_resolution_time"] = {
+                    "median_s": None,
+                    "p95_s": None,
+                    "answered": 0,
+                    "pending": len(pending),
+                }
+    except Exception as exc:  # noqa: BLE001
+        out["sme_resolution_time"] = {"error": str(exc)}
+
+    return out
+
+
+def _strip_doc_prefix(uri: str) -> str:
+    """Normalise a page URI to its relative form so BP and SD entries
+    can be compared directly. ``documentation/bp/foo.md`` →
+    ``bp/foo.md`` and ``documentation/sd/...`` → ``sd/...``; anything
+    that's already a relative URI is returned unchanged."""
+    if not uri:
+        return ""
+    s = str(uri).lstrip("/")
+    if s.startswith("documentation/"):
+        s = s[len("documentation/"):]
+    return s
+
 
 def _llm_overall_rollup(per_module: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Roll the per-module LLM summary into a single overall row.

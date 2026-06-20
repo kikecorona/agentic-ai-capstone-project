@@ -538,6 +538,13 @@ section for an SD page. Constraints:
 
 * Output ONLY the section body. Do NOT include the heading; the caller
   prepends `## <section_title>` itself.
+* Start with the substantive content. Do NOT begin with phrases like
+  "Based on the analysis", "Here are the", "According to the source",
+  "The following section describes", or any similar framing — the
+  reader sees the body inline in the page, not as a chat reply.
+* Do NOT end with meta-commentary ("Note that the analysis does not
+  cover...", "It is worth mentioning that..."). Either include the
+  fact in the body or omit it.
 * Use ONLY facts from the analysis. Don't invent endpoints, methods, or
   downstream services. If the analysis is empty or doesn't cover the
   section, write what you can and explicitly note "(further detail

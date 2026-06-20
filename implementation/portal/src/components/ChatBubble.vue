@@ -59,7 +59,14 @@
               <div class="sources-label">sources</div>
               <ul>
                 <li v-for="(s, i) in m.sources" :key="i">
-                  <code>{{ s.source_uri }}</code>
+                  <router-link
+                    v-if="docHrefFor(s)"
+                    :to="docHrefFor(s)"
+                    class="src-link"
+                  >
+                    <code>{{ s.source_uri }}</code>
+                  </router-link>
+                  <code v-else>{{ s.source_uri }}</code>
                   <span v-if="s.distance != null" class="src-d">
                     d={{ s.distance.toFixed(3) }}
                   </span>
@@ -177,6 +184,39 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/\n/g, "<br>");
+}
+
+// Turn a chunk source into a router-link target so the operator can
+// jump straight from the chat to the corresponding file in the
+// Documentation tab. The chunk dict carries ``{source_uri, domain}``
+// where ``source_uri`` is whatever the specialist passed to
+// ``RAG_MCP.index`` — typically a page path relative to the page
+// store's prefix (``architecture/foo.md``, ``products/bar.md``),
+// occasionally already prefixed (``documentation/sd/...``). The
+// ``domain`` (``bp`` / ``sd``) is what we use to fill in the
+// missing ``documentation/<domain>/`` segment when the URI is bare.
+//
+// Returns ``null`` for anything we can't resolve to a Markdown doc
+// (non-``.md`` URIs, unknown domains, etc.) — those get rendered as
+// plain text instead of links.
+function docHrefFor(s) {
+  const raw = (typeof s === "string" ? s : s?.source_uri) || "";
+  const domain = (typeof s === "object" && s?.domain) || "";
+  let p = String(raw).trim().replace(/^\/+/, "");
+  if (!p) return null;
+  // Already rooted at the docs tree.
+  if (p.startsWith("documentation/")) {
+    return { name: "docs", query: { file: p } };
+  }
+  // Rooted at a domain folder (``bp/...`` / ``sd/...``).
+  if (/^(bp|sd)\//.test(p)) {
+    return { name: "docs", query: { file: `documentation/${p}` } };
+  }
+  // Bare path — use the chunk's domain field to fill in the prefix.
+  if (domain === "bp" || domain === "sd") {
+    return { name: "docs", query: { file: `documentation/${domain}/${p}` } };
+  }
+  return null;
 }
 </script>
 
@@ -303,6 +343,18 @@ function escapeHtml(s) {
 .src-d {
   color: #888;
   margin-left: 6px;
+}
+.src-link {
+  color: var(--theme-accent-secondary);
+  text-decoration: none;
+}
+.src-link:hover {
+  text-decoration: underline;
+  color: var(--theme-accent-primary);
+}
+.src-link code {
+  color: inherit;
+  background: transparent;
 }
 .chat-input-bar {
   display: flex;

@@ -611,12 +611,23 @@ and a small action space keep it reliable on the local LLM.
 1. **`route`** — classifies the inbound event into `{portal_query, trigger_refresh, sme_reply}`.
 2. **`dispatch`** — forwards refreshes to the right specialist; for queries, picks a single
    specialist or fans out to both.
-3. **`ingest_sme_reply`** — re-integration ([§9.5.1](#951-placeholders-and-re-integration)).
+3. **`merge`** *(query mode only)* — when both specialists answered, picks the strongest status
+   (`ok` > `low_confidence` > `exhausted`), dedupes sources by `(source_uri, domain)`, and
+   collapses near-identical answers (substring containment or ≥85% token overlap) into a single
+   `From BP + SD: <body>` line instead of repeating the same prose twice.
+4. **`polish`** *(query mode, status=`ok` only)* — final editor pass: a temperature-0 prose-LLM
+   call rewrites the merged answer to strip hedges (`further detail TBD`, `appears to be...`),
+   meta-commentary (`according to [S1]`), inline `[S1]` / `[S2]` citation markers (the chat UI
+   lists sources separately), and speculative options the draft was unsure about. The
+   `From BP + SD: ` lead-in is preserved; facts are never invented. A deterministic regex
+   strip after the LLM call removes any citation markers the model leaves behind.
+   Best-effort — failure falls back to the un-polished merge.
+5. **`ingest_sme_reply`** — re-integration ([§9.5.1](#951-placeholders-and-re-integration)).
    Persists the SME's answer as a new BP doc via `BP_MCP.ingest_sme_doc`, walks
    `originating_pages` asking each owning specialist to patch its page (placeholder block →
    SME's text + link to the new doc), tells BP to re-index, removes the entry from
    `pending_sme_questions`. The patching specialist updates its own `open_placeholders`.
-4. **`ack_completion`** — marks the in-flight task complete; if the response is a background-mode
+6. **`ack_completion`** — marks the in-flight task complete; if the response is a background-mode
    escalation envelope, opens or updates the corresponding `pending_sme_questions` entry.
    Query-mode responses never carry an escalation envelope.
 

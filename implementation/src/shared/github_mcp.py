@@ -28,6 +28,7 @@ import json
 import threading
 from typing import Any
 
+import httpx
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from .mcp_http_client import _AsyncBridge
@@ -332,6 +333,58 @@ class GitHubMCPClient:
         if blob_sha:
             self._sha_cache[(target_branch, path)] = blob_sha
         return {"commit_sha": commit_sha, "blob_sha": blob_sha, "raw": result}
+
+    # ---------------------------------------------------------- create_tag
+
+    def create_tag(
+        self,
+        tag_name: str,
+        *,
+        branch: str | None = None,
+        message: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a lightweight Git tag pointing at the head of ``branch``.
+
+        The upstream ``@modelcontextprotocol/server-github`` MCP doesn't
+        expose tag creation as a tool, so we call the REST API directly
+        with the same PAT we hand the MCP. Two round-trips:
+
+          1. ``GET /repos/{owner}/{repo}/branches/{branch}`` → head commit sha.
+          2. ``POST /repos/{owner}/{repo}/git/refs`` with
+             ``{ref: refs/tags/<tag>, sha: <commit_sha>}``.
+
+        If the tag already exists the API returns 422 with
+        "Reference already exists" — we treat that as a no-op rather
+        than an error so callers can retry safely. Returns
+        ``{tag, commit_sha, created}``.
+
+        ``message`` is currently unused (lightweight tag, not annotated).
+        Reserved for a future bump to annotated tags via the ``git/tags``
+        endpoint.
+        """
+        del message  # reserved
+        target_branch = branch or self.branch
+        ref = f"refs/tags/{tag_name}"
+        api_root = f"https://api.github.com/repos/{self.owner}/{self.repo}"
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        with httpx.Client(timeout=30.0) as http:
+            r = http.get(f"{api_root}/branches/{target_branch}", headers=headers)
+            r.raise_for_status()
+            commit_sha = (r.json().get("commit") or {}).get("sha")
+            if not commit_sha:
+                raise GitHubMCPError(
+                    f"create_tag: branch {target_branch!r} has no head commit"
+                )
+            body = {"ref": ref, "sha": commit_sha}
+            r = http.post(f"{api_root}/git/refs", headers=headers, json=body)
+            if r.status_code == 422 and "already exists" in r.text.lower():
+                return {"tag": tag_name, "commit_sha": commit_sha, "created": False}
+            r.raise_for_status()
+            return {"tag": tag_name, "commit_sha": commit_sha, "created": True}
 
 
 # ---------------------------------------------------------------------------

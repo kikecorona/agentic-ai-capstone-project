@@ -48,6 +48,8 @@ class PageStore(Protocol):
 
     def page_exists(self, page_uri: str) -> bool: ...
 
+    def create_tag(self, tag_name: str) -> dict: ...
+
 
 class LocalPageStore:
     """Filesystem-backed PageStore.
@@ -118,6 +120,12 @@ class LocalPageStore:
         if prefix_path.is_file():
             return [self._rel(prefix_path, self.pages_root)]
         return sorted(self._rel(p, self.pages_root) for p in prefix_path.rglob("*") if p.is_file())
+
+    def create_tag(self, tag_name: str) -> dict:
+        """No-op for the local-FS store — there's no Git remote to tag.
+        Return a shape consistent with the GitHub backend so callers
+        don't need to branch."""
+        return {"tag": tag_name, "commit_sha": None, "created": False}
 
     # -- helpers ------------------------------------------------------------
 
@@ -216,6 +224,12 @@ class GitHubPageStore:
             if stripped:
                 rel.append(stripped)
         return sorted(rel)
+
+    def create_tag(self, tag_name: str) -> dict:
+        """Tag the head of the configured branch via the GitHub MCP
+        client. Returns ``{tag, commit_sha, created}`` — ``created``
+        is ``False`` when the tag already existed (idempotent)."""
+        return self._gh.create_tag(tag_name)
 
 
 def _gh_not_found_cls():

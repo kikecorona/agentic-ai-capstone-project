@@ -30,6 +30,7 @@ import asyncio
 import json
 import threading
 from contextlib import AsyncExitStack
+from datetime import timedelta
 from typing import Any
 
 from mcp import ClientSession
@@ -102,9 +103,27 @@ class MCPHttpClient:
     # -- lifecycle -----------------------------------------------------------
 
     def _open_session(self) -> None:
+        # NB: ``streamablehttp_client`` defaults to ``timeout=30s``
+        # (per-request) and ``sse_read_timeout=300s`` (no-message
+        # tear-down). Both are far below a real refresh — SD's
+        # ``dispatch_refresh`` over a 36-page repo runs LLM gap-detect
+        # + RAG retrieves on the local Ollama and easily exceeds 5 min.
+        # Without overriding these the transport quietly closes the
+        # SSE stream even though SD eventually replies, leaving the
+        # orchestrator hanging until our ``_bridge.run`` times out at
+        # ``self._timeout``. We thread the same generous budget into
+        # both transport timeouts so the SDK actually waits.
+        timeout = timedelta(seconds=self._timeout)
+
         async def _open():
             stack = AsyncExitStack()
-            r, w, _ = await stack.enter_async_context(streamablehttp_client(self.url))
+            r, w, _ = await stack.enter_async_context(
+                streamablehttp_client(
+                    self.url,
+                    timeout=timeout,
+                    sse_read_timeout=timeout,
+                )
+            )
             session = ClientSession(r, w)
             await stack.enter_async_context(session)
             await session.initialize()
@@ -158,7 +177,16 @@ class MCPHttpClient:
 
     async def _call(self, tool: str, args: dict[str, Any]) -> Any:
         assert self._session is not None
-        result = await self._session.call_tool(tool, args)
+        # ``call_tool``'s ``read_timeout_seconds`` defaults to None,
+        # which falls back to ``ClientSession``'s built-in (5 min).
+        # Thread our budget through so a long-running tool (SD's
+        # ``dispatch_refresh`` over many pages, BP's enrich, etc.)
+        # doesn't time out at the session layer.
+        result = await self._session.call_tool(
+            tool,
+            args,
+            read_timeout_seconds=timedelta(seconds=self._timeout),
+        )
         return _unpack_result(result)
 
 

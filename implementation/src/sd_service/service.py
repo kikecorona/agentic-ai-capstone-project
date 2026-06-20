@@ -378,6 +378,10 @@ class SDService:
                 f"escalations={len(escalations)} "
                 f"skipped={sum(1 for o in outcomes if o.skipped)}"
             )
+            # Tag the head of the docs branch so each refresh has a
+            # rollback marker. Best-effort — tag failure must NOT fail
+            # the refresh, since the pages have already been written.
+            self._tag_after_refresh(affected_pages_count=len(affected_pages))
             return {
                 "affected_pages": affected_pages,
                 "escalations": escalations,
@@ -844,6 +848,27 @@ class SDService:
                 json_mode=True,
             )
         return self._chat_llm
+
+    def _tag_after_refresh(self, *, affected_pages_count: int) -> None:
+        """Mark a successful refresh in Git so each run has a rollback
+        anchor. Tag shape: ``sd-refresh-<UTC timestamp>``. Skipped
+        when no pages were written (nothing to mark) and silenced on
+        any error (a tag failure must never fail the dispatch — the
+        pages already landed)."""
+        if affected_pages_count <= 0:
+            return
+        ts = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        tag = f"sd-refresh-{ts}"
+        try:
+            res = self._pages.create_tag(tag)
+            if res.get("created"):
+                log.info(
+                    f"tagged refresh {tag} → {res.get('commit_sha') or '(no sha)'}"
+                )
+            else:
+                log.info(f"tag {tag} already existed; skipped")
+        except Exception as exc:  # noqa: BLE001
+            log.warn(f"create_tag {tag} failed (non-fatal): {format_exception(exc)}")
 
     # -------------------------------------------- find_services_for_product
 

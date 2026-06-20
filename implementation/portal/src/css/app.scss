@@ -8,3 +8,12 @@ body,
   height: 100%;
   margin: 0;
 }
+
+// Visited links inherit the unvisited colour. The chat sources list
+// (and any rendered Markdown link in the docs viewer) shouldn't
+// switch to the browser's default purple after a click — the theme
+// owns the link palette, and the visited variant is irrelevant in
+// an internal portal where everything is "visited" within minutes.
+a:visited {
+  color: inherit;
+}

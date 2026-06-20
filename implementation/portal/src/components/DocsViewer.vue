@@ -19,7 +19,7 @@
 
     <div class="row col grow no-wrap">
       <!-- ─── Left pane: directory listing ─────────────────────────── -->
-      <div class="docs-tree col-3 column">
+      <div v-if="!hideTree" class="docs-tree col-3 column">
         <q-toolbar class="bg-grey-9 text-white">
           <q-icon name="folder_open" class="q-mr-sm" />
           <q-breadcrumbs class="path-label" active-color="white">
@@ -91,7 +91,7 @@
         </q-scroll-area>
       </div>
 
-      <q-separator vertical />
+      <q-separator v-if="!hideTree" vertical />
 
       <!-- ─── Right pane: file render ─────────────────────────────── -->
       <div class="docs-body col column">
@@ -145,6 +145,14 @@ const props = defineProps({
   basePath: { type: String, required: true },
   owner: { type: String, default: "kikecorona" },
   repo: { type: String, default: "pear-store" },
+  // Optional: pre-select a specific file path inside the repo on
+  // mount. Used by deep-links from the chat sources list (each
+  // source is a router-link to ``/docs?file=...``).
+  initialFile: { type: String, default: "" },
+  // Optional: hide the left directory listing and only render the
+  // selected file. Used by the SME Answers pane where we just want
+  // to show the originating page next to the reply form.
+  hideTree: { type: Boolean, default: false },
 });
 
 const gh = inject("gh");
@@ -324,6 +332,30 @@ function goUp() {
   goTo(segs.join("/"));
 }
 
+// Open a specific file path (used both by router deep-links and any
+// cross-component "open this doc" callers). The file path is the
+// full repo path, e.g. ``documentation/sd/services/billing.md``.
+// Sets ``currentPath`` to the parent dir, selects the file, and
+// triggers the directory listing + content fetch.
+function openFile(filePath) {
+  if (!filePath) return;
+  // Reject anything outside the basePath so the explorer doesn't
+  // climb above its own root.
+  const norm = String(filePath).replace(/^\/+/, "");
+  if (!norm.startsWith(props.basePath)) return;
+  const segs = norm.split("/").filter(Boolean);
+  segs.pop();
+  const parent = segs.join("/") || props.basePath;
+  if (parent !== currentPath.value) {
+    currentPath.value = parent;
+    reload();
+  }
+  selectedPath.value = norm;
+  loadFile(norm);
+}
+
+defineExpose({ openFile });
+
 async function loadFile(path) {
   contentLoading.value = true;
   renderedHtml.value = "";
@@ -445,6 +477,17 @@ watch(
     renderedHtml.value = "";
     reload();
   },
+);
+// Deep-link: on mount (and on subsequent changes via the route query
+// being reused) jump to the requested file. ``immediate: true`` so a
+// page load with ``?file=...`` lands on that file without a manual
+// click; subsequent changes also re-route the explorer.
+watch(
+  () => props.initialFile,
+  (file) => {
+    if (file) openFile(file);
+  },
+  { immediate: true },
 );
 
 // Theme flip: re-init mermaid with the matching literal palette and

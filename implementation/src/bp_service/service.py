@@ -315,6 +315,10 @@ class BPService:
                 f"escalations={len(escalations)} "
                 f"skipped={sum(1 for o in outcomes if o.skipped)}"
             )
+            # Tag the head of the docs branch so each refresh has a
+            # rollback marker. Best-effort — tag failure must NOT fail
+            # the refresh (pages have already been written).
+            self._tag_after_refresh(affected_pages_count=len(affected_pages))
             return {
                 "affected_pages": affected_pages,
                 "escalations": escalations,
@@ -629,6 +633,26 @@ class BPService:
                 json_mode=True,
             )
         return self._chat_llm
+
+    def _tag_after_refresh(self, *, affected_pages_count: int) -> None:
+        """Mark a successful refresh in Git so each run has a rollback
+        anchor. Tag shape: ``bp-refresh-<UTC timestamp>``. Skipped
+        when no pages were written; silent on tag failure (the pages
+        already landed, a tag failure must never fail the dispatch)."""
+        if affected_pages_count <= 0:
+            return
+        ts = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        tag = f"bp-refresh-{ts}"
+        try:
+            res = self._pages.create_tag(tag)
+            if res.get("created"):
+                log.info(
+                    f"tagged refresh {tag} → {res.get('commit_sha') or '(no sha)'}"
+                )
+            else:
+                log.info(f"tag {tag} already existed; skipped")
+        except Exception as exc:  # noqa: BLE001
+            log.warn(f"create_tag {tag} failed (non-fatal): {format_exception(exc)}")
 
     # -------------------------------------------- find_products_for_service
 

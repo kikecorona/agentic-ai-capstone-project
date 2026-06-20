@@ -132,14 +132,33 @@ class RAGService:
             mcp_domain=domain,
         ) as span:
             ch = content_hash or _sha1(document)
-            tot: ToTResult = select_chunking_strategy(
-                document,
-                k=self._tot_cfg.k,
-                beam=self._tot_cfg.beam,
-                depth=self._tot_cfg.depth,
-                threshold=self._tot_cfg.threshold,
-                probe_count=self._tot_cfg.probe_count,
-            )
+            # Wrap the ToT chunking selection in its own child span so
+            # the dashboard's "ToT branch success rate" KPI has rows to
+            # aggregate. Status mirrors the loop outcome — ``ok`` when a
+            # candidate cleared the threshold, ``low_confidence`` when
+            # the depth cap was reached without a winner. The ``index``
+            # parent span keeps tracking the overall index outcome.
+            with self._otel.span(
+                service=SERVICE_NAME,
+                mcp_method="tot.chunking",
+                mcp_domain=domain,
+            ) as tot_span:
+                tot: ToTResult = select_chunking_strategy(
+                    document,
+                    k=self._tot_cfg.k,
+                    beam=self._tot_cfg.beam,
+                    depth=self._tot_cfg.depth,
+                    threshold=self._tot_cfg.threshold,
+                    probe_count=self._tot_cfg.probe_count,
+                )
+                tot_span.set_status("low_confidence" if tot.low_confidence else "ok")
+                tot_span.set_attributes({
+                    "chunking_strategy": tot.strategy.label(),
+                    "tot_score": round(tot.score, 3),
+                    "tot_branches": len(tot.trail),
+                    "tot_depth": self._tot_cfg.depth,
+                    "tot_beam": self._tot_cfg.beam,
+                })
             embedding_revision = new_embedding_revision()
             chunks_indexed = self._store.upsert(
                 domain=domain,

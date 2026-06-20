@@ -232,19 +232,44 @@ def _coerce_rewrite(value: Any) -> str:
 
 
 def _generate_answer(query: str, chunks: list[StoredChunk]) -> str:
-    """Compose an answer grounded only in the retrieved chunks."""
+    """Compose an answer grounded only in the retrieved chunks.
+
+    The answer is consumed in two places: query-mode (Portal chatbot)
+    where a tight conversational reply is fine, and background-mode
+    enrichment (B&P / SD ``fill_from_rag``) where the prose is dropped
+    directly into a doc section. The latter is intolerant of
+    LLM-style preambles ("Based on the sources..."), trailing
+    meta-commentary ("Note that..."), and refusal hedges — so the
+    system prompt forbids all three explicitly.
+    """
     llm = get_chat_llm("rag.auto_rag.generator", temperature=0.0)
     sources = "\n\n".join(
         f"[S{i + 1}] (domain={c.domain}, source={c.source_uri})\n{c.text}"
         for i, c in enumerate(chunks)
     )
     prompt = (
-        "Answer the QUERY using ONLY the SOURCES below. Cite each claim with "
-        "[S1], [S2], etc. If the sources do not support an answer, say so "
-        "explicitly. Be concise.\n\n"
+        "Write the answer to the QUERY using ONLY the SOURCES below. Cite "
+        "each claim inline with [S1], [S2], etc.\n\n"
         f"QUERY: {query}\n\nSOURCES:\n{sources}"
     )
-    msg = llm.invoke([SystemMessage(content="You answer grounded in cited sources."), HumanMessage(content=prompt)])
+    system = (
+        "You write technical documentation prose grounded in cited sources. "
+        "Constraints:\n"
+        "* Start with the substantive content. Do NOT begin with phrases "
+        "like \"Based on the sources\", \"According to\", \"Here are the "
+        "key points\", \"The provided sources indicate\", or any similar "
+        "framing.\n"
+        "* Do NOT end with meta-commentary about the sources (\"Note that "
+        "there is no explicit discussion of...\", \"It is worth noting "
+        "that the sources don't mention...\", etc.). Either include the "
+        "fact in the body or omit it.\n"
+        "* If the sources don't support an answer, write the partial "
+        "answer the sources DO support and append \"(further detail TBD)\" "
+        "rather than refusing or apologising.\n"
+        "* Cite every factual claim inline with [S1], [S2], etc. matching "
+        "the SOURCES list. Be concise."
+    )
+    msg = llm.invoke([SystemMessage(content=system), HumanMessage(content=prompt)])
     return msg.content.strip() if isinstance(msg.content, str) else str(msg.content)
 
 

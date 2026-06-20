@@ -4,14 +4,15 @@
     two clearly labelled sections:
 
       • Service Metrics — infrastructure-level signals (call counts,
-        latency, error rate, status histograms) derived from the OTel
-        span store via /v1/metrics.
+        latency, error rate) derived from the OTel span store via
+        /v1/metrics.
 
-      • Agent Metrics — output-quality signals from §9.7 (RAG status,
-        grader-fail / re-grade pass rates, escalation, ToT branch
-        success, coverage, freshness, open-placeholder rate, SME
-        resolution time, cross-reference health). Items derivable from
-        the existing span stream populate live; items that need an
+      • Agent Metrics — output-quality signals from §9.7 (status
+        histograms across every method, grader-fail / re-grade pass
+        rates, escalation, ToT branch success, enrichment outcomes,
+        coverage, freshness, open-placeholder rate, SME resolution
+        time, cross-reference health). Items derivable from the
+        existing span stream populate live; items that need an
         additional data source render as labelled "pending" cards so
         the §9.7 surface is visible end-to-end.
 
@@ -96,14 +97,6 @@
           kind="latency"
         />
       </div>
-      <div class="col-12">
-        <metrics-panel
-          title="status histogram (all methods)"
-          :rows="statusRows"
-          empty-text="No status histogram yet."
-          kind="status"
-        />
-      </div>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════
@@ -114,6 +107,17 @@
       icon="psychology"
       label="AGENT METRICS"
     />
+
+    <div class="row q-col-gutter-md q-mb-md">
+      <div class="col-12">
+        <metrics-panel
+          title="status histogram (all methods)"
+          :rows="statusRows"
+          empty-text="No status histogram yet."
+          kind="status"
+        />
+      </div>
+    </div>
 
     <div class="row q-col-gutter-md q-mb-md">
       <div class="col-6 col-sm-3">
@@ -186,25 +190,6 @@
       </div>
     </div>
 
-    <div class="row q-col-gutter-md q-mb-md">
-      <div class="col-12 col-md-6">
-        <metrics-panel
-          title="RAG retrieve status"
-          :rows="ragStatusRows"
-          empty-text="No RAG retrieve spans yet."
-          kind="status"
-        />
-      </div>
-      <div class="col-12 col-md-6">
-        <metrics-panel
-          title="dispatch + enrich outcomes (escalation signal)"
-          :rows="dispatchStatusRows"
-          empty-text="No dispatch / enrich spans yet."
-          kind="status"
-        />
-      </div>
-    </div>
-
     <!-- LLM latency — sourced from the audit DB's llm_calls table.
          Headline KPIs cover overall calls / error rate / p50 / p95;
          the panel below breaks p50/p95 down per `module` so the
@@ -256,37 +241,42 @@
       </div>
     </div>
 
-    <!-- §9.7 metrics that need data sources outside /v1/metrics —
-         render as pending placeholders so the operator can see the
-         intended shape. The `source` line on each card describes
-         what's needed to wire it. -->
+    <!-- §9.7 doc-index + SME-loop KPIs sourced from /v1/metrics's
+         `agent` section (BP/SD doc-indexes + orchestrator's
+         pending_sme_questions table). The two cards still rendered
+         as `dashboard-pending-card` are the ones that need data
+         sources outside the existing on-disk state. -->
     <div class="row q-col-gutter-md q-mb-md">
       <div class="col-12 col-sm-6 col-md-4">
-        <dashboard-pending-card
+        <kpi-card
           label="coverage"
-          sub="% products with BP page · % services with SD page"
-          source="needs BP/SD doc_index query"
+          :value="coverageOverallLabel"
+          :sub="coverageSub"
+          accent="accent"
         />
       </div>
       <div class="col-12 col-sm-6 col-md-4">
-        <dashboard-pending-card
+        <kpi-card
           label="freshness"
-          sub="median age since last refresh · % pages with diverged hash"
-          source="needs BP/SD doc_index query"
+          :value="freshnessLabel"
+          :sub="freshnessSub"
+          accent="accent"
         />
       </div>
       <div class="col-12 col-sm-6 col-md-4">
-        <dashboard-pending-card
+        <kpi-card
           label="open-placeholder rate"
-          sub="% pages with at least one unresolved SME-PLACEHOLDER"
-          source="needs BP/SD doc_index query"
+          :value="openPlaceholderLabel"
+          :sub="openPlaceholderSub"
+          :accent="openPlaceholderRatio > 0.25 ? 'warning' : 'accent'"
         />
       </div>
       <div class="col-12 col-sm-6 col-md-4">
-        <dashboard-pending-card
+        <kpi-card
           label="SME resolution time"
-          sub="median / p95 (posted_at → answered)"
-          source="needs OC pending_sme_questions schema bump"
+          :value="smeResolutionLabel"
+          :sub="smeResolutionSub"
+          accent="accent"
         />
       </div>
       <div class="col-12 col-sm-6 col-md-4">
@@ -612,10 +602,101 @@ const llmLatencyRows = computed(() =>
 
 const llmSlowestModule = computed(() => llmLatencyRows.value[0]?.key || "");
 
+// ─── §9.7 doc-index + SME aggregates from /v1/metrics.agent ────────
+// The orchestrator's ``_agent_quality_rollup`` reads BP/SD doc-indexes
+// + ``pending_sme_questions`` and ships back a tidy summary; the
+// dashboard formats it for display.
+const agent = computed(() => metrics.value.agent || {});
+
+// Coverage — BP coverage = "% of products SD points to that BP also
+// has a page for"; SD coverage = symmetric.
+const bpCoverageRatio = computed(() => agent.value.coverage?.bp?.ratio ?? null);
+const sdCoverageRatio = computed(() => agent.value.coverage?.sd?.ratio ?? null);
+const coverageOverallLabel = computed(() => {
+  const parts = [];
+  if (bpCoverageRatio.value !== null) parts.push(`BP ${formatPct(bpCoverageRatio.value)}`);
+  if (sdCoverageRatio.value !== null) parts.push(`SD ${formatPct(sdCoverageRatio.value)}`);
+  return parts.length ? parts.join(" · ") : "—";
+});
+const coverageSub = computed(() => {
+  const bp = agent.value.coverage?.bp;
+  const sd = agent.value.coverage?.sd;
+  const parts = [];
+  if (bp) parts.push(`${bp.covered}/${bp.expected} products`);
+  if (sd) parts.push(`${sd.covered}/${sd.expected} services`);
+  return parts.length ? parts.join(" · ") : "no cross-references";
+});
+
+// Freshness — median age since last refresh per domain.
+const freshnessLabel = computed(() => {
+  const bp = agent.value.freshness?.bp?.median_age_s;
+  const sd = agent.value.freshness?.sd?.median_age_s;
+  const parts = [];
+  if (bp != null) parts.push(`BP ${formatAge(bp)}`);
+  if (sd != null) parts.push(`SD ${formatAge(sd)}`);
+  return parts.length ? parts.join(" · ") : "—";
+});
+const freshnessSub = computed(() => {
+  const bp = agent.value.freshness?.bp;
+  const sd = agent.value.freshness?.sd;
+  const parts = [];
+  if (bp) parts.push(`${bp.stale_count}/${bp.count} BP stale`);
+  if (sd) parts.push(`${sd.stale_count}/${sd.count} SD stale`);
+  return parts.length ? `>24h: ${parts.join(" · ")}` : "no pages indexed";
+});
+
+// Open-placeholder rate — % pages with at least one open
+// SME-PLACEHOLDER. We surface the worst of (BP, SD) on the headline
+// number so a single bad domain isn't averaged away.
+const openPlaceholderRatio = computed(() => {
+  const bp = agent.value.open_placeholder_rate?.bp?.ratio ?? 0;
+  const sd = agent.value.open_placeholder_rate?.sd?.ratio ?? 0;
+  return Math.max(bp, sd);
+});
+const openPlaceholderLabel = computed(() => {
+  if (!agent.value.open_placeholder_rate) return "—";
+  return formatPct(openPlaceholderRatio.value);
+});
+const openPlaceholderSub = computed(() => {
+  const bp = agent.value.open_placeholder_rate?.bp;
+  const sd = agent.value.open_placeholder_rate?.sd;
+  const parts = [];
+  if (bp) parts.push(`BP ${bp.count_with_open}/${bp.total_pages}`);
+  if (sd) parts.push(`SD ${sd.count_with_open}/${sd.total_pages}`);
+  return parts.length ? parts.join(" · ") : "—";
+});
+
+// SME resolution time — median / p95 across answered questions.
+const smeResolutionLabel = computed(() => {
+  const m = agent.value.sme_resolution_time?.median_s;
+  if (m == null) return "—";
+  return formatAge(m);
+});
+const smeResolutionSub = computed(() => {
+  const t = agent.value.sme_resolution_time;
+  if (!t) return "—";
+  const p95 = t.p95_s != null ? `p95 ${formatAge(t.p95_s)}` : null;
+  const counts = `${t.answered ?? 0} answered · ${t.pending ?? 0} pending`;
+  return p95 ? `${p95} · ${counts}` : counts;
+});
+
 // ─── Helpers ────────────────────────────────────────────────────────
 function formatPct(x) {
   if (x === null || x === undefined) return "—";
   return `${(x * 100).toFixed(1)}%`;
+}
+
+// Compact age formatter — turns seconds into a single-unit label
+// (45s, 12m, 3h, 2d) so the freshness / SME-resolution KPI tiles
+// stay readable. Uses the largest sensible unit; precision is one
+// decimal for hours and below, integer for days.
+function formatAge(seconds) {
+  if (seconds == null || isNaN(seconds)) return "—";
+  const s = Math.max(0, Number(seconds));
+  if (s < 60) return `${s.toFixed(0)}s`;
+  if (s < 3600) return `${(s / 60).toFixed(1)}m`;
+  if (s < 86400) return `${(s / 3600).toFixed(1)}h`;
+  return `${Math.round(s / 86400)}d`;
 }
 
 async function reload() {
