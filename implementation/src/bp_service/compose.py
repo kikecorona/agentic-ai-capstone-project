@@ -352,6 +352,59 @@ def _strip_leading_heading(md: str, expected_title: str) -> str:
     return pat.sub("", md, count=1)
 
 
+# Heuristic for "this section's body is empty / a placeholder / a TODO,
+# so it's safe to overwrite during enrichment." A section with
+# substantive prose is NEVER overwritten — the agent might mistakenly
+# flag a complete section as a gap, and we can't let that delete
+# human-authored content.
+_SME_FENCE_RX = re.compile(
+    r"<!--\s*SME-PLACEHOLDER:[a-zA-Z0-9_-]+\s+START\s*-->.*?"
+    r"<!--\s*SME-PLACEHOLDER:[a-zA-Z0-9_-]+\s+END\s*-->",
+    re.DOTALL | re.IGNORECASE,
+)
+_BOILERPLATE_LINE_RX = re.compile(
+    r"^\s*(?:[-*>]\s*)?(?:"
+    r"tbd|todo|fixme|wip|n/?a|"
+    r"to be (?:filled|determined|added|written|completed)\.?|"
+    r"add (?:more )?details(?: about this(?: here)?)?\.?|"
+    r"more details to come\.?|"
+    r"placeholder\.?|"
+    r"\(empty\)|\(none\)"
+    r")\s*\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _section_body_is_fillable(body: str) -> bool:
+    """Return True when ``body`` is empty / only TBD / only TODO /
+    only SME-PLACEHOLDER blocks — i.e. the section is genuinely a gap
+    we can safely overwrite. Returns False when the body has any
+    substantive prose; in that case the merger keeps the existing
+    content untouched even if the gap-detector tagged the section as
+    needing fill (defence against destructive false positives).
+    """
+    s = (body or "").strip()
+    if not s:
+        return True
+    # Strip all SME-PLACEHOLDER blocks; if nothing else is left, fillable.
+    s = _SME_FENCE_RX.sub("", s).strip()
+    if not s:
+        return True
+    # Strip HTML comments so a sole `<!-- TODO -->` doesn't count as prose.
+    s = re.sub(r"<!--.*?-->", "", s, flags=re.DOTALL).strip()
+    if not s:
+        return True
+    # Drop boilerplate marker lines; if substantive text remains, NOT fillable.
+    keep = []
+    for line in s.splitlines():
+        if not line.strip():
+            continue
+        if _BOILERPLATE_LINE_RX.match(line):
+            continue
+        keep.append(line)
+    return not keep
+
+
 def _replace_or_insert_section(
     page: str,
     *,
@@ -359,13 +412,38 @@ def _replace_or_insert_section(
     canonical: str,
     anchor_before: str,
 ) -> str:
-    """Replace an existing ``## heading`` block or insert a new one."""
+    """Replace an existing ``## heading`` block or insert a new one.
+
+    **Safety rule** (added after a destructive incident where a buggy
+    gap-detector flagged substantive sections as gaps and the merge
+    overwrote them): if the existing section already has prose,
+    refuse to replace and return the page unchanged. Only sections
+    whose bodies pass ``_section_body_is_fillable`` (empty / TBD /
+    SME-PLACEHOLDER) get overwritten.
+    """
     # Use look-ahead to capture body up to the next "## " heading.
     pattern = re.compile(
         rf"(^|\n)##\s+{re.escape(heading)}\s*\n.*?(?=\n##\s+|\Z)",
         re.IGNORECASE | re.DOTALL,
     )
-    if pattern.search(page):
+    m = pattern.search(page)
+    if m:
+        whole_block = m.group(0)
+        # Strip the heading line to recover just the body for the
+        # fillable check.
+        body_only = re.sub(
+            rf"^.*?##\s+{re.escape(heading)}\s*\n",
+            "",
+            whole_block,
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not _section_body_is_fillable(body_only):
+            log.info(
+                f"merge_into_existing: section '{heading}' has substantive content; "
+                "skipping merge to preserve existing prose"
+            )
+            return page
         return pattern.sub(lambda m: m.group(1) + canonical.rstrip(), page, count=1)
     # Not present → insert before "## Open Questions" if it exists.
     anchor_re = re.compile(

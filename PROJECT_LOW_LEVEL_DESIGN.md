@@ -249,71 +249,126 @@ Methods exposed by `SD_MCP`:
 
 #### 9.2.3 Implementation details
 
-The SD agent is one **LangGraph** state graph whose entry router dispatches to the right path
-based on the operating mode (background vs query).
+The SD agent is a LangGraph state graph fronted by `SD_MCP`. Two operating modes share the
+same state — **background** (refresh) and **query** — and the same `analyze_code` node powers
+both, so live answers stay consistent with the last refresh's output.
 
-*Background mode (enrich-existing)* — `dispatch_refresh` iterates the union of existing SD pages
-(`documentation/sd/<service>.md`) and services discovered in `SD_SOURCES_GH_PATH`. For every
-existing page, the agent reads the current content, recovers the service name from the page URI
-(or the `doc_index` entry), pulls a fresh source-code analysis via `analyze_code`, and asks the
-LLM judge to score the page against a fixed rubric (Overview / Endpoints / Downstream services /
-Data model / Observability / Open Questions). Each detected gap drives a focused
-`RAG_MCP.retrieve(domain_filter=both)` query — the analysis summary (endpoints + downstream
-calls) is appended as a context hint so the retriever can disambiguate. Substantive answers
-merge in via `compose.merge_into_existing`; `low_confidence` / `exhausted` retrievals get
-rendered as `SME-PLACEHOLDER` blocks (§9.5). The merged page is hashed and re-indexed via
-`RAG_MCP.index(domain=sd, source_uri=page_uri, document, content_hash)`. The agent records the
-returned `chunking_strategy`, `embedding_revision`, and a fresh `side_info_revision` (a hash
-summary of the source-code analysis used during this enrichment) in its `doc_index`.
-SME-answered prose carried forward from prior refreshes is detected via `SME-ANSWERED:question_id`
-fences and preserved verbatim, so a re-run never overwrites human-authored answers.
+**Background mode — `dispatch_refresh`** iterates the union of *existing SD pages* (read from
+the page store) and *services discovered in source code* (read from the source store).
+Existing pages take the enrich-existing path; services without a page yet fall back to the
+compose-from-scratch path used at first run.
 
-After every existing page is enriched, the *new-service discovery* pass picks up any services
-in `SD_SOURCES_GH_PATH` that don't yet have an SD page and runs the original "compose from
-scratch" pipeline (`pull_source` → `analyze_code` → ToT dep-graph → `resolve_bp_links` →
-`write_doc` → `RAG_MCP.index`). The next refresh of those services then takes the enrich-existing
-path like any other.
+```mermaid
+flowchart TD
+    Start([dispatch_refresh]) --> ListP[list_pages]
+    Start --> ListS[list_services]
+    ListP --> Enrich[for each page<br/>_refresh_one_page]
+    ListS --> Filter{has page<br/>already?}
+    Filter -->|yes| Skip[skip - covered<br/>by enrich loop]
+    Filter -->|no| New[for each new service<br/>_refresh_one_service]
+    Enrich --> Done([dispatch_refresh done])
+    New --> Done
+    classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+    classDef boundary fill: #FFF9C4, stroke: #F57F17, color: #E65100
+    classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
+    class ListP,ListS,Enrich,New,Skip node
+    class Filter decision
+    class Start,Done boundary
+```
 
-*Skip-unchanged* — the per-page check now keys on the SD page's own content hash plus the
-`side_info_revision`. A page is skipped only when both match the prior refresh; if the
-underlying source code changed (new endpoints, new dependencies) the SD page re-enriches even
-though its own bytes didn't change. `force=true` bypasses both checks.
+**Per-page enrich-existing flow:**
 
-*Query mode* — a question routed to SD delegates retrieval to the RAG Service via
-`RAG_MCP.retrieve(query, domain_filter=sd, mode=query)` ([Section 9.1.3.1](#9131-autonomous-rag-loop)).
-The Orchestrator's dispatch envelope seeds the SD-domain hint that SD passes through; cross-domain
-queries pass `domain_filter=both`. If the response comes back with `status=ok` the answer is
-composed from the returned chunks with citations. If the response is `low_confidence` or
-`exhausted` — typically because the existing SD page genuinely doesn't cover the question — a
-focused `analyze_code` pass runs on a targeted subset of files (the file backing the
-closest-matching endpoint, taken from the response's `sources`) and feeds the composer. The user
-always gets an answer back: if the RAG response and focused analysis both leave the response
-low-confidence, it is returned as such with closest-match citations and the analyzer's notes.
-Query mode never escalates to an SME — that flow is reserved for background builds (see
-[Section 9.5](#95-sme-interaction-module-6)).
+```mermaid
+flowchart TB
+    Start([_refresh_one_page]) --> Read[read existing page]
+    Read --> Resolve[resolve owning service<br/>incl. DB-naming convention<br/>e.g. database/foo-db.md to foo]
+    Resolve --> Pull[analyze_code produces analysis_summary]
+    Pull --> Skip{page_hash and<br/>side_info_revision<br/>both unchanged?}
+    Skip -->|yes and not force| ExitU([span=unchanged])
+    Skip -->|no, or force| Hint[classify_by_path picks page_kind hint]
+    Hint --> Detect[detect_gaps LLM<br/>classify + propose sections + grade<br/>strategy=source or rag per gap]
+    Detect --> Loop[for each gap]
+    Loop --> Strat{strategy?}
+    Strat -->|source| Compose[prose-LLM on analysis JSON]
+    Strat -->|rag| Retrieve[RAG_MCP.retrieve]
+    Retrieve --> Quality{ok?}
+    Quality -->|ok| Filled
+    Quality -->|low_conf or exhausted| SME[SME-PLACEHOLDER]
+    Compose --> Filled
+    SME --> Filled[FilledGap]
+    Filled --> Loop
+    Loop --> Merge[merge_into_existing<br/>SAFETY: skip merge if existing<br/>section has substantive prose]
+    Merge --> Index[RAG_MCP.index domain=sd]
+    Index --> Persist[upsert doc_index<br/>side_info_revision, answered_sme_blocks]
+    Persist --> ExitE([span=enriched or escalated_only])
+    classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+    classDef llm fill: #E3F2FD, stroke: #1565C0, color: #0D47A1
+    classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
+    classDef boundary fill: #FFF9C4, stroke: #F57F17, color: #E65100
+    classDef sme fill: #FCE4EC, stroke: #AD1457, color: #880E4F
+    class Read,Resolve,Pull,Hint,Loop,Retrieve,Merge,Index,Persist node
+    class Detect,Compose llm
+    class Skip,Strat,Quality decision
+    class Start,ExitU,ExitE boundary
+    class SME sme
+```
 
-Reusing the same code-analysis node across both modes keeps the live answers consistent with what
-we documented during the last refresh — they come from the same logic. Delegating retrieval to the
-same RAG Service across B&P and SD keeps query-time behavior consistent across domains.
+**Page-kind rubrics** (seed for the LLM judge + fallback when the call fails):
 
-*Telemetry* — every existing-page enrichment emits a `sd_service.enrich_page` OTel span tagged
-with `gap_count`, `filled_count`, `escalated_count`, and `is_substantive` attributes; status is
-one of `enriched` / `escalated_only` / `unchanged` / `page_deleted` / `error`. The new-service
-compose path emits the existing `sd_service.dispatch_refresh` shape. The Dashboard surfaces
-both under "pages enriched / unchanged / escalated-only / new pages stubbed" KPIs and the
-dispatch-outcomes histogram.
+| `page_kind`             | Expected sections |
+|-------------------------|-------------------|
+| `service`               | Overview · Endpoints · Downstream services · Data model · Observability · Open Questions |
+| `architecture-overview` | Overview · Service map · Ownership boundaries · Why this shape · What is not in this system |
+| `data-flow`             | Overview · Sequence · Triggers · Failure modes · Open Questions |
+| `data-store`            | Overview · Schema · Access patterns · Consistency · retention · Open Questions |
+| `other`                 | Overview · Details · Open Questions |
 
-*ReAct loop.* The outer loop is a `reason → act → observe` cycle: `reason` picks the next step
-from `{pull_source, analyze_code, verify_telemetry, run_tot_dep_graph, resolve_bp_links,
-write_doc, rag_index, rag_retrieve, focused_analyze, compose_answer, escalate, done}` based on the
-operating mode and the partial result so far. `act` calls the chosen sub-step (e.g.,
-`analyze_code` is itself a five-step internal pipeline — see
-[Section 9.2.3.1](#9231-analyze_code); `rag_index` and `rag_retrieve` are MCP calls into the RAG
-Service). `observe` writes the result back into graph state and a conditional edge loops back to
-`reason` until the action returns `done`. Background mode is mostly deterministic so the local LLM
-rarely deviates from the planned order; query mode is more active — the reasoner decides whether
-the RAG response was sufficient or focused code analysis is needed. `escalate` is reachable only
-from background mode.
+**Gap criteria** — a section is a gap iff one of: heading is missing; body is empty; body is
+a boilerplate marker (`TBD` / `TODO` / `FIXME` / `WIP` / `N/A` / "to be filled" / "add
+details" / "placeholder"); body contains a `SME-PLACEHOLDER` fence. **Subjective judgments
+("could be more detailed") are explicitly NOT gap criteria.** As defence-in-depth,
+`compose.merge_into_existing` runs `_section_body_is_fillable` before overwriting any
+matched heading; substantive prose is never replaced even when the detector mis-flags it.
+
+**Fill strategies** (one per gap, picked by the detector):
+
+* **`source`** — answer is in the source-code analysis (endpoints, downstream calls, data
+  stores). Composed by a prose-LLM (`get_chat_llm(module="sd.enrich.compose",
+  json_mode=False)`) from the analysis JSON; no RAG retrieve. Falls through to RAG on prose-
+  LLM error so a single hiccup doesn't stall the refresh.
+* **`rag`** — needs prose context not in the code. Auto-RAG retrieve (§9.1.3.1) with the
+  analysis appended as a context hint. `low_confidence` / `exhausted` → SME-PLACEHOLDER (§9.5).
+
+**Skip-unchanged + ordering:**
+
+* Per-page skip iff `(page_hash, side_info_revision)` both match the prior refresh.
+  `side_info_revision` hashes the source-code analysis, so a code change re-enriches even
+  when the page bytes didn't change.
+* `force=true` (operator override from the portal) bypasses both checks.
+* The orchestrator runs **SD's `dispatch_refresh` to completion before BP's**, so BP's
+  `_collect_sd_summary()` and `resolve_sd_links()` see the freshly-written SD doc-index.
+
+**SME continuity** — `<!-- SME-ANSWERED:question_id ... -->` fences inside a page body are
+detected pre-enrichment and reused verbatim instead of re-asking. Doc-index
+`answered_sme_blocks` carries them across refreshes as a second line of defence.
+
+**Telemetry** — every page emits a `sd_service.enrich_page` OTel span with attributes
+`page_kind`, `gap_count`, `filled_count`, `escalated_count`, `source_intended_count`,
+`rag_intended_count`, `is_substantive`. Status: `enriched` / `escalated_only` / `unchanged` /
+`page_deleted` / `error`. The Dashboard panels (§9.8.4) aggregate these into the
+"pages enriched / unchanged / escalated-only / new pages stubbed" KPIs.
+
+**Query mode** — delegates to `RAG_MCP.retrieve(query, domain_filter=sd, mode=query)`
+([§9.1.3.1](#9131-autonomous-rag-loop)). On `low_confidence` / `exhausted` a focused
+`analyze_code` runs against the file backing the closest-matching endpoint; the user always
+gets an answer back, flagged low-confidence when uncertain. Query mode never escalates to an
+SME — that's reserved for background builds (§9.5).
+
+**ReAct loop.** The outer reasoner cycles through `{pull_source, analyze_code,
+verify_telemetry, run_tot_dep_graph, resolve_bp_links, write_doc, rag_index, rag_retrieve,
+focused_analyze, compose_answer, escalate, done}`. Background mode is mostly deterministic;
+query mode is more reactive (the reasoner decides whether the RAG response is enough or
+focused-analysis is needed). `escalate` is reachable only from background mode.
 
 ```mermaid
 %%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
@@ -480,62 +535,137 @@ Methods exposed by `BP_MCP`:
 
 #### 9.3.3 Implementation details
 
-The B&P agent is one LangGraph state graph.
+The B&P agent is a LangGraph state graph fronted by `BP_MCP`. Two operating modes share the
+same state — **background** (refresh) and **query** — and the same SD cross-reference
+summary feeds both, so live answers stay consistent with the last refresh.
 
-*Background mode (enrich-existing)* — the agent walks `documentation/bp/` for the set of pages it
-already maintains. For each page, it reads the current content, asks an LLM judge to score
-structural completeness against a fixed rubric (Overview / Use Cases / Capabilities /
-Integrations / Open Questions), and produces a list of `Gap` objects naming the missing or
-non-substantive sections. Each gap drives a focused `RAG_MCP.retrieve(domain_filter=both)` query
-plus a side-info call into `SD_MCP` for services the gap references; gaps that come back
-`status=ok` are merged into the existing page in place (`compose.merge_into_existing`), gaps that
-come back `low_confidence` / `exhausted` get rendered as `SME-PLACEHOLDER` blocks (§9.5). The
-merged page is hashed and re-indexed via `RAG_MCP.index(domain=bp, source_uri=page_uri,
-document, content_hash)`; the agent records the returned `chunking_strategy`,
-`embedding_revision`, and a fresh `side_info_revision` (a hash summary of the SD doc-index used
-during this enrichment) in its `doc_index`. SME-answered prose carried forward from prior
-refreshes is detected via `SME-ANSWERED:question_id` fences and preserved verbatim, so a re-run
-never overwrites human-authored answers.
+**Background mode — `dispatch_refresh`** iterates the union of *existing BP pages* (read
+from `documentation/bp/`) and *products discovered in SD's doc-index* (`referenced_products`
+across every SD page). Existing pages take the enrich-existing path; products without a
+page yet get a minimal stub written, then picked up by the next refresh.
 
-After every existing page is enriched, a *new-page discovery* pass scans SD's doc-index for
-`referenced_products` whose slug isn't yet in the B&P `doc_index`. Each missing product gets a
-minimal stub page written under `documentation/bp/`; the next refresh picks it up and runs the
-full enrichment pass against the skeleton.
+```mermaid
+flowchart TD
+    Start([dispatch_refresh]) --> ListP[list_pages]
+    Start --> SD[collect SD summary<br/>SD_MCP.list_pages]
+    SD --> Refs[union referenced_products]
+    ListP --> Enrich[for each page<br/>_refresh_one_page]
+    Refs --> Filter{has page<br/>already?}
+    Filter -->|yes| Skip[skip - covered<br/>by enrich loop]
+    Filter -->|no| Stub[for each missing product<br/>write stub page]
+    Enrich --> Done([dispatch_refresh done])
+    Stub --> Done
+    classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+    classDef boundary fill: #FFF9C4, stroke: #F57F17, color: #E65100
+    classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
+    class ListP,SD,Refs,Enrich,Stub,Skip node
+    class Filter decision
+    class Start,Done boundary
+```
 
-*Skip-unchanged* — the inventory check now keys on the BP page's own content hash plus the
-`side_info_revision`. A page is skipped only when both match the prior refresh; if SD's doc-index
-state changed (new services, new product references) the BP page re-enriches even though its own
-bytes didn't change. `force=true` bypasses both checks.
+**Per-page enrich-existing flow:**
 
-*Query mode* — incoming questions are answered by delegating to the RAG Service via
-`RAG_MCP.retrieve(query, domain_filter=bp, mode=query)` ([Section 9.1.3.1](#9131-autonomous-rag-loop)).
-The Orchestrator's dispatch envelope seeds the BP-domain hint that B&P passes through;
-cross-domain queries pass `domain_filter=both`, so the response sees BP and SD chunks together
-without any merge step on B&P's side. When the response references a service in its answer, the
-same `resolve_sd_links` node runs to resolve the reference at answer time, so the user sees an
-up-to-date link even if the persisted page is briefly stale. If the response comes back as
-`low_confidence` or `exhausted`, the user gets a low-confidence answer with closest-match
-citations — query mode does not escalate to an SME (see
-[Section 9.5](#95-sme-interaction-module-6)).
+```mermaid
+flowchart TB
+    Start([_refresh_one_page]) --> Read[read existing page]
+    Read --> Pull[collect SD summary<br/>via SD_MCP]
+    Pull --> Skip{page_hash and<br/>side_info_revision<br/>both unchanged?}
+    Skip -->|yes and not force| ExitU([span=unchanged])
+    Skip -->|no, or force| Hint[classify_by_path picks page_kind hint]
+    Hint --> Detect[detect_gaps LLM<br/>classify + propose sections + grade<br/>strategy=sd-mcp or rag per gap]
+    Detect --> Loop[for each gap]
+    Loop --> Strat{strategy?}
+    Strat -->|sd-mcp| Compose[prose-LLM on SD summary JSON]
+    Strat -->|rag| Retrieve[RAG_MCP.retrieve domain=both]
+    Retrieve --> Quality{ok?}
+    Quality -->|ok| Filled
+    Quality -->|low_conf or exhausted| SME[SME-PLACEHOLDER]
+    Compose --> Filled
+    SME --> Filled[FilledGap]
+    Filled --> Loop
+    Loop --> Merge[merge_into_existing<br/>SAFETY: skip merge if existing<br/>section has substantive prose]
+    Merge --> Index[RAG_MCP.index domain=bp]
+    Index --> Persist[upsert doc_index<br/>side_info_revision, answered_sme_blocks]
+    Persist --> ExitE([span=enriched or escalated_only])
+    classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+    classDef llm fill: #E3F2FD, stroke: #1565C0, color: #0D47A1
+    classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
+    classDef boundary fill: #FFF9C4, stroke: #F57F17, color: #E65100
+    classDef sme fill: #FCE4EC, stroke: #AD1457, color: #880E4F
+    class Read,Pull,Hint,Loop,Retrieve,Merge,Index,Persist node
+    class Detect,Compose llm
+    class Skip,Strat,Quality decision
+    class Start,ExitU,ExitE boundary
+    class SME sme
+```
 
-*Telemetry* — every `_refresh_one` invocation emits a `bp_service.enrich_page` OTel span tagged
-with `gap_count`, `filled_count`, `escalated_count`, and `is_substantive` attributes. The span
-status takes one of `enriched` / `escalated_only` / `unchanged` / `stub_created` / `page_deleted` /
-`error`; the Dashboard surfaces these under "pages enriched / unchanged / escalated-only / new
-pages stubbed" KPIs and rolls them into the dispatch-outcomes panel.
+**Page-kind rubrics** (seed for the LLM judge + fallback when the call fails):
 
-The cross-referencing direction is symmetric with SD: B&P calls **SD MCP** to resolve "what
-services serve this product"; SD calls **B&P MCP** to resolve "what products depend on this
-service". The two services do not write into each other's pages — they just link.
+| `page_kind`     | Expected sections |
+|-----------------|-------------------|
+| `product`       | Overview · Use Cases · Capabilities · Integrations · Open Questions |
+| `business-case` | Overview · Problem · Stakeholders · Success metrics · Risks · Open Questions |
+| `flow`          | Overview · Steps · Triggers · Decision points · Open Questions |
+| `strategy`      | Overview · Goals · Approach · Risks · Open Questions |
+| `other`         | Overview · Details · Open Questions |
 
-*ReAct loop.* The outer loop is a `reason → act → observe` cycle: `reason` picks the next step
-from `{ingest_input_docs, rag_index, resolve_sd_links, write_bp_doc, rag_retrieve,
-compose_answer, escalate, done}` based on the operating mode and partial result. `act` calls the
-chosen sub-step (e.g., `rag_index` and `rag_retrieve` are MCP calls into the RAG Service);
-`observe` writes the result back into graph state and a conditional edge loops back to `reason`.
-Background mode is mostly deterministic sequencing through ingest → index → resolve_links →
-write_doc; query mode hands off to `rag_retrieve` and composes the answer around the RAG
-response. `escalate` is reachable only from background mode.
+**Gap criteria** — a section is a gap iff one of: heading is missing; body is empty; body is
+a boilerplate marker (`TBD` / `TODO` / `FIXME` / `WIP` / `N/A` / "to be filled" / "add
+details" / "placeholder"); body contains a `SME-PLACEHOLDER` fence. **Subjective judgments
+("could be more detailed") are explicitly NOT gap criteria.** As defence-in-depth,
+`compose.merge_into_existing` runs `_section_body_is_fillable` before overwriting any
+matched heading; substantive prose is never replaced even when the detector mis-flags it.
+
+**Fill strategies** (one per gap, picked by the detector):
+
+* **`sd-mcp`** — answer is in the SD doc-index summary (`Integrations`, service-list
+  sections). Composed by a prose-LLM (`get_chat_llm(module="bp.enrich.compose",
+  json_mode=False)`) from the SD summary JSON; no RAG retrieve. The prose LLM is
+  system-prompted to refuse fabrication — if the summary doesn't cover the section it
+  appends `(further detail TBD — not in SD cross-reference)` rather than inventing services.
+  Falls through to RAG on prose-LLM error so a single hiccup doesn't stall the refresh.
+* **`rag`** — needs prose context not in the SD index. Auto-RAG retrieve (§9.1.3.1) with
+  `domain_filter=both` + the SD summary appended as a context hint. `low_confidence` /
+  `exhausted` → SME-PLACEHOLDER (§9.5).
+
+**Skip-unchanged + ordering:**
+
+* Per-page skip iff `(page_hash, side_info_revision)` both match the prior refresh.
+  `side_info_revision` hashes the SD doc-index summary, so an SD change re-enriches even
+  when the BP page bytes didn't change.
+* `force=true` (operator override from the portal) bypasses both checks.
+* The orchestrator runs **SD's `dispatch_refresh` to completion before BP's**, so BP's
+  `_collect_sd_summary()` and `resolve_sd_links()` see the freshly-written SD doc-index.
+* New-page stubs are written before the next refresh's enrich pass, never inline — the
+  enrichment LLM never sees a half-written page from the same run.
+
+**SME continuity** — `<!-- SME-ANSWERED:question_id ... -->` fences inside a page body are
+detected pre-enrichment and reused verbatim instead of re-asking. Doc-index
+`answered_sme_blocks` carries them across refreshes as a second line of defence.
+
+**Telemetry** — every page emits a `bp_service.enrich_page` OTel span with attributes
+`page_kind`, `gap_count`, `filled_count`, `escalated_count`, `sd_intended_count`,
+`rag_intended_count`, `is_substantive`. Status: `enriched` / `escalated_only` / `unchanged` /
+`stub_created` / `page_deleted` / `error`. The Dashboard panels (§9.8.4) aggregate these
+into the "pages enriched / unchanged / escalated-only / new pages stubbed" KPIs.
+
+**Query mode** — delegates to `RAG_MCP.retrieve(query, domain_filter=bp, mode=query)`
+([§9.1.3.1](#9131-autonomous-rag-loop)). Cross-domain queries pass
+`domain_filter=both`, so the response sees BP and SD chunks together without any merge
+step on B&P's side. When the response references a service, the same `resolve_sd_links`
+node resolves the reference at answer time, so the user sees an up-to-date link even if
+the persisted page is briefly stale. On `low_confidence` / `exhausted` the user gets a
+low-confidence answer with closest-match citations — query mode never escalates to an SME
+(that's reserved for background builds, §9.5).
+
+**Cross-domain isolation** — B&P calls **SD MCP** to resolve "what services serve this
+product"; SD calls **B&P MCP** to resolve "what products depend on this service". The two
+services do not write into each other's pages — they just link.
+
+**ReAct loop.** The outer reasoner cycles through `{ingest_input_docs, rag_index,
+resolve_sd_links, write_bp_doc, rag_retrieve, compose_answer, escalate, done}`. Background
+mode is mostly deterministic; query mode hands off to `rag_retrieve` and composes the
+answer around the RAG response. `escalate` is reachable only from background mode.
 
 ```mermaid
 %%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
@@ -964,11 +1094,17 @@ tab bar, and a collapsible right-side drawer on top:
     ([§9.5](#95-sme-interaction-module-6)). After a successful post, the question vanishes
     from the pending list and a toast names the page(s) that got their placeholder block
     replaced.
-  * **Dashboard** — pinned to the right of the tab bar. KPI tiles on top (total spans, error
-    rate, overall p95 latency, RAG low-confidence rate) followed by the §9.6-derived
-    breakdowns: per-(service, method) span counts, p50/p95 latency, status histograms, RAG
-    retrieve status distribution, and dispatch-outcome status histograms (escalation signal).
-    Polled on a short interval — charts re-render in place.
+  * **Dashboard** — pinned to the right of the tab bar. Split into two clearly-labelled
+    sections: **Service Metrics** (infrastructure-level KPIs from the OTel span store —
+    total spans, error rate, overall p95 latency, per-(service, method) span counts and
+    p50/p95 latency, status histograms) and **Agent Metrics** (output-quality KPIs from
+    §9.7 — re-grade pass rate, grader-fail rate, escalation rate, ToT branch success,
+    enrichment outcomes, RAG retrieve status, dispatch+enrich outcomes). The Agent Metrics
+    section also surfaces **LLM latency** sourced from the audit DB's `llm_calls` table
+    (overall call count, error rate, p50, p95) plus a per-`module` latency panel
+    (`rag.auto_rag.grader`, `bp.compose_answer`, `sd.enrich.compose`, …) so the operator
+    can see which step is the slow one. Polled on a short interval — charts re-render in
+    place.
   * **Multi-Agents X-Ray** *(right-side collapsible drawer, not a tab)* — toggled from a header
     button. Subscribes to `GET /v1/streams/events`, the merged SSE feed of service-log
     entries ([§9.6](#96-audit-and-observability-module-6) "service log") and LLM call records

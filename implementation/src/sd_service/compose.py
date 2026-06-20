@@ -24,8 +24,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.shared.service_log import get_logger
+
 from .analyze_code import Endpoint, ServiceAnalysis
 from .tot_dep_graph import DepEdge, ToTResult
+
+log = get_logger("rag.sd.compose")
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +143,52 @@ def _strip_leading_heading(md: str, expected_title: str) -> str:
     return pat.sub("", md, count=1)
 
 
+# Heuristic for "this section's body is empty / a placeholder / a TODO,
+# so it's safe to overwrite during enrichment." See the BP-side twin
+# in ``bp_service/compose.py`` for the rationale — a substantive
+# section is NEVER overwritten so a false-positive gap detection
+# can't delete human-authored content.
+_SME_FENCE_RX = re.compile(
+    r"<!--\s*SME-PLACEHOLDER:[a-zA-Z0-9_-]+\s+START\s*-->.*?"
+    r"<!--\s*SME-PLACEHOLDER:[a-zA-Z0-9_-]+\s+END\s*-->",
+    re.DOTALL | re.IGNORECASE,
+)
+_BOILERPLATE_LINE_RX = re.compile(
+    r"^\s*(?:[-*>]\s*)?(?:"
+    r"tbd|todo|fixme|wip|n/?a|"
+    r"to be (?:filled|determined|added|written|completed)\.?|"
+    r"add (?:more )?details(?: about this(?: here)?)?\.?|"
+    r"more details to come\.?|"
+    r"placeholder\.?|"
+    r"\(empty\)|\(none\)"
+    r")\s*\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _section_body_is_fillable(body: str) -> bool:
+    """True iff ``body`` is empty / only TBD / only TODO / only
+    SME-PLACEHOLDER blocks. Substantive prose returns False so the
+    merger leaves it untouched."""
+    s = (body or "").strip()
+    if not s:
+        return True
+    s = _SME_FENCE_RX.sub("", s).strip()
+    if not s:
+        return True
+    s = re.sub(r"<!--.*?-->", "", s, flags=re.DOTALL).strip()
+    if not s:
+        return True
+    keep = []
+    for line in s.splitlines():
+        if not line.strip():
+            continue
+        if _BOILERPLATE_LINE_RX.match(line):
+            continue
+        keep.append(line)
+    return not keep
+
+
 def _replace_or_insert_section(
     page: str,
     *,
@@ -146,12 +196,34 @@ def _replace_or_insert_section(
     canonical: str,
     anchor_before: str,
 ) -> str:
-    """Replace an existing ``## heading`` block or insert a new one."""
+    """Replace an existing ``## heading`` block or insert a new one.
+
+    **Safety rule** (added after a destructive incident on
+    architecture/overview.md where a buggy gap-detector flagged
+    substantive sections as gaps and the merge overwrote them): if
+    the existing section already has prose, refuse to replace and
+    return the page unchanged.
+    """
     pattern = re.compile(
         rf"(^|\n)##\s+{re.escape(heading)}\s*\n.*?(?=\n##\s+|\Z)",
         re.IGNORECASE | re.DOTALL,
     )
-    if pattern.search(page):
+    m = pattern.search(page)
+    if m:
+        whole_block = m.group(0)
+        body_only = re.sub(
+            rf"^.*?##\s+{re.escape(heading)}\s*\n",
+            "",
+            whole_block,
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not _section_body_is_fillable(body_only):
+            log.info(
+                f"merge_into_existing: section '{heading}' has substantive content; "
+                "skipping merge to preserve existing prose"
+            )
+            return page
         return pattern.sub(lambda m: m.group(1) + canonical.rstrip(), page, count=1)
     anchor_re = re.compile(
         rf"(^|\n)##\s+{re.escape(anchor_before)}\s*\n",

@@ -34,6 +34,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from src.shared.llm import get_chat_llm
 from src.shared.service_log import get_logger
 
 from .compose import PageEscalation, render_placeholder_block
@@ -43,17 +44,69 @@ log = get_logger("bp.enrich")
 
 # ─── Rubric ────────────────────────────────────────────────────────────
 
-# Section name → human-readable description. The LLM judge sees this
-# verbatim when scoring a page; the order also gives us a stable order
-# to APPEND missing sections in (when ``compose.merge_into_existing``
-# falls back to append rather than replace-in-place).
-BP_REQUIRED_SECTIONS: list[tuple[str, str]] = [
-    ("Overview", "What this product is and what problem it solves."),
-    ("Use Cases", "Concrete scenarios the product supports."),
-    ("Capabilities", "Key features and surfaces (UI, API, integrations)."),
-    ("Integrations", "Services this product depends on or integrates with."),
-    ("Open Questions", "Anything unresolved that needs SME input."),
-]
+# BP pages are heterogeneous like SD's — `documentation/bp/` holds
+# product overviews, business-cases, user-flow walks, strategy docs.
+# Each kind needs different sections. Rubrics are FALLBACKS — the
+# primary path asks the LLM to classify + propose sections + grade in
+# a single call, with the SD doc-index as side-info; these rubrics are
+# the seed shown to the LLM and the safety-net when the call fails.
+BP_PAGE_RUBRICS: dict[str, list[tuple[str, str]]] = {
+    "product": [
+        ("Overview", "What this product is and what problem it solves."),
+        ("Use Cases", "Concrete scenarios the product supports."),
+        ("Capabilities", "Key features and surfaces (UI, API, integrations)."),
+        ("Integrations", "Services this product depends on or integrates with."),
+        ("Open Questions", "Anything unresolved that needs SME input."),
+    ],
+    "business-case": [
+        ("Overview", "What this case is about and why it matters now."),
+        ("Problem", "The user / business problem this addresses."),
+        ("Stakeholders", "Who's affected, who decides, who funds."),
+        ("Success metrics", "How we know it worked."),
+        ("Risks", "What could go wrong + mitigations."),
+        ("Open Questions", "Anything unresolved that needs SME input."),
+    ],
+    "flow": [
+        ("Overview", "What user journey or business flow this describes."),
+        ("Steps", "Step-by-step walk-through of the flow."),
+        ("Triggers", "What kicks the flow off."),
+        ("Decision points", "Where the flow branches and on what signal."),
+        ("Open Questions", "Anything unresolved that needs SME input."),
+    ],
+    "strategy": [
+        ("Overview", "What this strategic doc covers and the time horizon."),
+        ("Goals", "Outcomes we're aiming at."),
+        ("Approach", "How we'll get there."),
+        ("Risks", "What threatens success + how we'll respond."),
+        ("Open Questions", "Anything unresolved that needs SME input."),
+    ],
+    "other": [
+        ("Overview", "Top-level description of what this page covers."),
+        ("Details", "The substantive content — sections appropriate for the topic."),
+        ("Open Questions", "Anything unresolved that needs SME input."),
+    ],
+}
+
+PAGE_KINDS = tuple(BP_PAGE_RUBRICS.keys())
+
+
+def classify_by_path(page_uri: str) -> str:
+    """Heuristic-only classifier from the page URI. Used as the LLM
+    prompt seed and as a deterministic fallback if the LLM fails."""
+    p = (page_uri or "").lower()
+    if "/business-cases/" in p or "/business_cases/" in p or "/cases/" in p:
+        return "business-case"
+    if "/flows/" in p or "/journeys/" in p or "/journey/" in p:
+        return "flow"
+    if "/strategy/" in p or "/strategies/" in p or "/brand/" in p:
+        return "strategy"
+    if "/products/" in p or "/product/" in p or "/features/" in p:
+        return "product"
+    return "other"
+
+
+# Backwards-compat alias — the old flat list maps to the product rubric.
+BP_REQUIRED_SECTIONS = BP_PAGE_RUBRICS["product"]
 
 
 # ─── Gap detection ─────────────────────────────────────────────────────
@@ -63,28 +116,102 @@ class Gap:
     section_title: str          # heading text the gap maps to (e.g. "Use Cases")
     why_gap: str                # LLM rationale (≤ 200 chars)
     fill_prompt: str            # RAG-friendly question to seed retrieval
+    # Where to look for the fill content. ``sd-mcp`` means the answer
+    # is directly available via the SD MCP cross-reference (e.g.
+    # which services back this product) — bypass RAG and compose from
+    # the SD summary. ``rag`` means we need prose context not in SD's
+    # doc-index. The LLM judge picks per gap; ``rag`` is the
+    # conservative default.
+    fill_strategy: str = "rag"
 
 
 @dataclass
 class GapPlan:
     gaps: list[Gap] = field(default_factory=list)
     is_substantive: bool = False
+    # NEW — what kind of page the gap-detector decided this is. One of
+    # ``product`` / ``business-case`` / ``flow`` / ``strategy`` /
+    # ``other``. Logged as an OTel span attribute on ``enrich_page``.
+    page_kind: str = "other"
+    # Sections the LLM judged this page should have, in order. Logged
+    # for telemetry / debugging.
+    expected_sections: list[str] = field(default_factory=list)
 
 
 _GAP_DETECT_SYSTEM = """\
-You are a documentation reviewer for B&P (business & product) pages.
-Judge whether each REQUIRED SECTION provides substantive, accurate
-content. A section is "substantive" if it has at least one paragraph
-that describes what the header implies, beyond placeholder text (TBD,
-TODO, empty bullets). SME-PLACEHOLDER blocks always count as gaps.
+You are a documentation reviewer for B&P (business & product) pages in
+an org's docs repo. Pages are heterogeneous — some document a single
+product or feature, others walk a business case, a user flow, or a
+strategic decision. The same fixed rubric does NOT apply to all of them.
+
+For each page you review, do four things:
+
+1. CLASSIFY the page kind. Pick exactly ONE of:
+   - "product": single product / feature page (capabilities, use cases,
+     integrations).
+   - "business-case": a case for / against doing something
+     (problem, stakeholders, metrics, risks).
+   - "flow": a user journey or business flow walk-through
+     (steps, triggers, decision points).
+   - "strategy": strategic / brand doc with goals + approach.
+   - "other": none of the above; pick the closest neighbour.
+
+   Use the PAGE PATH and existing headings as your strongest signal,
+   followed by the body shape. The PATH-HINT below is a heuristic from
+   the URI — re-classify if the content disagrees.
+
+2. PROPOSE expected sections appropriate for the page kind, in
+   meaningful order (3–6 sections). Skip sections that don't apply
+   given the SD MCP side-info (e.g. don't include "Integrations" on a
+   strategy doc that doesn't reference services).
+
+3. For each expected section, decide if the existing page has
+   substantive content. **A section is a gap ONLY when one of these is
+   true:**
+     - the section heading is missing entirely from the page;
+     - the section heading is present but the body is empty;
+     - the body contains an SME-PLACEHOLDER fence
+       (``<!-- SME-PLACEHOLDER:... -->``);
+     - the body is one of the explicit placeholder markers: ``TBD``,
+       ``TODO``, ``FIXME``, ``WIP``, ``N/A``, "to be filled / to be
+       determined", "add (more) details", "placeholder", "(empty)".
+
+   **DO NOT** flag a section as a gap because you think it could be
+   "more substantive", "longer", "more detailed", or "better". If
+   prose is already there, leave it alone — the agent's job is to
+   FILL gaps, not rewrite human-authored content.
+
+   For each gap, write a fill_prompt — a focused retrieval question
+   (it'll be passed to a RAG retriever).
+
+4. For each gap, choose a FILL STRATEGY:
+   - "sd-mcp": the answer is directly available via the SD MCP
+     cross-reference for this product (e.g. "which services back
+     this product?"). The agent will compose the section from the
+     SD doc-index summary WITHOUT going through RAG retrieval.
+     Pick this when the gap is about service / integration mapping
+     and the SD summary clearly contains the relevant referenced
+     services. Don't pick it for prose-heavy sections like Overview
+     or Risks.
+   - "rag": the answer needs prose context (overview, business
+     intent, success metrics narrative). The agent will run a RAG
+     retrieve with the fill_prompt.
+   When in doubt, pick "rag" — fabricating an "sd-mcp" answer when
+   there's no relevant SD reference produces worse output than
+   escalating to an SME.
 
 Respond with JSON only, no prose, in this exact shape:
 {
+  "page_kind": "<one of the five keys above>",
+  "expected_sections": [
+    {"title": "Overview", "applies_because": "<one-sentence rationale>"}
+  ],
   "gaps": [
     {
-      "section_title": "<heading text>",
+      "section_title": "<heading text matching one of expected_sections>",
       "why_gap": "<one-sentence rationale>",
-      "fill_prompt": "<RAG-friendly question to fill the gap>"
+      "fill_prompt": "<focused retrieval question>",
+      "fill_strategy": "sd-mcp" | "rag"
     }
   ],
   "is_substantive": <true if no gaps, false otherwise>
@@ -92,19 +219,48 @@ Respond with JSON only, no prose, in this exact shape:
 """
 
 
-def detect_gaps(page_content: str, *, page_title: str | None, llm) -> GapPlan:
-    """Ask the LLM to judge structural completeness against the rubric.
+def detect_gaps(
+    page_content: str,
+    *,
+    page_uri: str | None = None,
+    page_title: str | None = None,
+    sd_summary: dict[str, Any] | None = None,
+    llm,
+) -> GapPlan:
+    """Classify the page kind and identify gap sections in one LLM call.
 
-    Returns a GapPlan with zero or more Gap entries; a non-empty list
-    means the page is judged incomplete and the listed sections need
-    fill content.
+    Heuristic-by-path picks an initial page-kind from the URI; the LLM
+    then re-classifies (or confirms) and proposes per-kind sections,
+    skipping ones that don't apply given the SD MCP summary side-info.
+
+    Falls back gracefully on LLM failure: a heuristic page-kind plus
+    no surfaced gaps — better to produce a no-op refresh than to
+    inject inappropriate placeholders.
     """
-    rubric_lines = "\n".join(
-        f"- {name}: {desc}" for name, desc in BP_REQUIRED_SECTIONS
-    )
+    path_hint = classify_by_path(page_uri or "")
+    seed_rubric = BP_PAGE_RUBRICS.get(path_hint, BP_PAGE_RUBRICS["other"])
+    seed_lines = "\n".join(f"- {name}: {desc}" for name, desc in seed_rubric)
+
+    # Compact SD summary so it fits the prompt budget.
+    if sd_summary:
+        pages = sd_summary.get("pages") or []
+        sd_block = (
+            f"SD MCP SUMMARY (services + their referenced products):\n"
+            + "\n".join(
+                f"  - {p.get('service') or p.get('page_uri')!r}: refs={p.get('referenced_products') or []}"
+                for p in pages[:24]
+            )
+            + ("" if pages else "  (empty — no SD pages indexed yet)\n")
+        )
+    else:
+        sd_block = "SD MCP SUMMARY: (not available — list_pages call failed or returned nothing)\n"
+
     user_msg = (
-        f"PAGE TITLE: {page_title or '(unknown)'}\n\n"
-        f"REQUIRED SECTIONS:\n{rubric_lines}\n\n"
+        f"PAGE PATH: {page_uri or '(unknown)'}\n"
+        f"PAGE TITLE: {page_title or '(unknown)'}\n"
+        f"PATH-HINT (heuristic, may be wrong): {path_hint}\n\n"
+        f"{sd_block}\n"
+        f"DEFAULT RUBRIC FOR HINTED KIND ({path_hint}):\n{seed_lines}\n\n"
         f"PAGE CONTENT:\n```markdown\n{page_content[:8000]}\n```"
     )
 
@@ -115,17 +271,31 @@ def detect_gaps(page_content: str, *, page_title: str | None, llm) -> GapPlan:
         ])
         text = raw.content if hasattr(raw, "content") else str(raw)
     except Exception as exc:  # noqa: BLE001
-        log.error(f"detect_gaps: LLM call failed: {exc}")
-        return GapPlan(is_substantive=True)
+        log.error(
+            f"detect_gaps: LLM call failed: {exc}; falling back to path hint without gaps"
+        )
+        return GapPlan(is_substantive=True, page_kind=path_hint)
 
     try:
         data = json.loads(_strip_code_fence(text))
     except Exception as exc:  # noqa: BLE001
         log.warn(
             f"detect_gaps: LLM returned non-JSON ({exc}); "
-            f"first 120 chars: {text[:120]!r}; treating as substantive"
+            f"first 120 chars: {text[:120]!r}; falling back to path hint without gaps"
         )
-        return GapPlan(is_substantive=True)
+        return GapPlan(is_substantive=True, page_kind=path_hint)
+
+    page_kind = (data.get("page_kind") or path_hint).strip().lower()
+    if page_kind not in PAGE_KINDS:
+        page_kind = path_hint
+
+    expected_sections_raw = data.get("expected_sections") or []
+    expected_sections: list[str] = []
+    for s in expected_sections_raw:
+        if isinstance(s, dict):
+            t = (s.get("title") or "").strip()
+            if t:
+                expected_sections.append(t)
 
     raw_gaps = data.get("gaps") or []
     gaps: list[Gap] = []
@@ -137,19 +307,34 @@ def detect_gaps(page_content: str, *, page_title: str | None, llm) -> GapPlan:
         if not title or title.lower() in seen_titles:
             continue
         seen_titles.add(title.lower())
+        # Validate fill_strategy. Downgrade "sd-mcp" to "rag" when we
+        # have no SD summary to draw from — better to retrieve than
+        # fabricate.
+        strategy = (g.get("fill_strategy") or "rag").strip().lower()
+        if strategy not in {"sd-mcp", "rag"}:
+            strategy = "rag"
+        if strategy == "sd-mcp" and not sd_summary:
+            strategy = "rag"
         gaps.append(
             Gap(
                 section_title=title,
                 why_gap=(g.get("why_gap") or "")[:200],
                 fill_prompt=(g.get("fill_prompt") or title)[:500],
+                fill_strategy=strategy,
             )
         )
     is_substantive = bool(data.get("is_substantive", not gaps))
     log.info(
-        f"detect_gaps: {len(gaps)} gap(s); is_substantive={is_substantive} "
+        f"detect_gaps: kind={page_kind} expected={len(expected_sections)} "
+        f"gaps={len(gaps)} is_substantive={is_substantive} "
         f"({', '.join(g.section_title for g in gaps) if gaps else 'all sections present'})"
     )
-    return GapPlan(gaps=gaps, is_substantive=is_substantive and not gaps)
+    return GapPlan(
+        gaps=gaps,
+        is_substantive=is_substantive and not gaps,
+        page_kind=page_kind,
+        expected_sections=expected_sections,
+    )
 
 
 def _strip_code_fence(s: str) -> str:
@@ -178,14 +363,22 @@ def fill_gap(
     page_uri: str,
     page_title: str | None,
     rag,
+    sd_summary: dict[str, Any] | None = None,
     answered_sme_blocks: dict[str, dict[str, Any]] | None = None,
 ) -> FilledGap:
-    """Fill a single gap by retrieving from RAG and emitting a section.
+    """Fill a single gap. Routes on ``gap.fill_strategy``:
 
-    Falls back to an SME-PLACEHOLDER block when retrieval is
-    exhausted / low-confidence. If ``answered_sme_blocks`` carries a
-    prior answer for the same gap question_id, the answered prose is
-    reused verbatim (§9.5 SME flow continuity).
+    * ``"sd-mcp"`` → compose the section directly from ``sd_summary``
+      via the LLM, no RAG retrieve. Used when the detector judged the
+      answer is in the SD doc-index (e.g. which services back this
+      product). Requires a non-empty ``sd_summary``; falls through
+      to RAG if the summary is missing.
+    * ``"rag"`` → run the auto-RAG retrieve loop with the fill prompt.
+      Falls back to SME-PLACEHOLDER on ``low_confidence`` / ``exhausted``.
+
+    If ``answered_sme_blocks`` carries a prior answer for the same gap
+    ``question_id``, the answered prose is reused verbatim (§9.5 SME
+    flow continuity).
     """
     qid = _question_id(gap, page_uri)
 
@@ -203,7 +396,23 @@ def fill_gap(
                 question_id=qid,
             )
 
-    # Hit RAG with the gap's fill prompt.
+    # SD-MCP-first path: detector marked this gap as directly
+    # answerable from the SD doc-index (e.g. service / integration
+    # mapping for this product). Compose from the summary directly.
+    if gap.fill_strategy == "sd-mcp" and sd_summary:
+        try:
+            return _fill_from_sd_summary(
+                gap, qid=qid, page_uri=page_uri, page_title=page_title,
+                sd_summary=sd_summary,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warn(
+                f"fill_gap: sd-mcp composition for {gap.section_title!r} "
+                f"failed ({exc}); falling through to RAG"
+            )
+            # Fall through to the RAG path below.
+
+    # RAG path — auto-RAG retrieve with the fill prompt.
     try:
         result = rag.retrieve(
             query=gap.fill_prompt,
@@ -227,12 +436,87 @@ def fill_gap(
     section_md = f"## {gap.section_title}\n\n{answer}\n"
     log.info(
         f"fill_gap: filled {gap.section_title!r} for {page_uri} "
-        f"({len(sources)} source(s))"
+        f"({len(sources)} source(s)) [strategy=rag]"
     )
     return FilledGap(
         gap=gap,
         section_md=section_md,
         sources=sources,
+        is_sme_placeholder=False,
+        question_id=qid,
+    )
+
+
+_FILL_FROM_SD_SYSTEM = """\
+You write technical documentation for B&P (business & product) pages.
+Given an SD MCP SUMMARY — services + the products they reference — write
+a single Markdown section for a B&P page. Constraints:
+
+* Output ONLY the section body. Do NOT include the heading; the caller
+  prepends `## <section_title>` itself.
+* Use ONLY facts from the SD summary. Don't invent services, products,
+  or relationships. If the summary doesn't cover the section, write
+  what you can and explicitly note "(further detail TBD — not in SD
+  cross-reference)" rather than fabricating.
+* Be concrete. When listing integrating services, use a bulleted list
+  ordered by service name; mention the relationship if the summary
+  records one (e.g. "backed by", "depends on").
+"""
+
+
+def _fill_from_sd_summary(
+    gap: Gap,
+    *,
+    qid: str,
+    page_uri: str,
+    page_title: str | None,
+    sd_summary: dict[str, Any],
+) -> FilledGap:
+    """Compose a section directly from the SD MCP summary via the LLM,
+    bypassing RAG. Used when the gap-detector marked the gap as
+    sd-mcp-fillable. The summary is the only source of facts; the LLM
+    is system-prompted to refuse fabrication.
+
+    Note: we fetch a sibling LLM with ``json_mode=False`` here because
+    the gap-detect LLM (``json_mode=True``) would force JSON output —
+    wrong for prose composition.
+    """
+    prose_llm = get_chat_llm(
+        module="bp.enrich.compose",
+        temperature=0.3,
+        json_mode=False,
+    )
+    summary_block = json.dumps(sd_summary, indent=2, default=str)[:4000]
+    user_msg = (
+        f"PAGE TITLE: {page_title or '(unknown)'}\n"
+        f"PAGE PATH: {page_uri}\n\n"
+        f"SECTION TO WRITE: {gap.section_title}\n"
+        f"SECTION INTENT: {gap.fill_prompt}\n\n"
+        f"SD MCP SUMMARY:\n```json\n{summary_block}\n```"
+    )
+    raw = prose_llm.invoke([
+        SystemMessage(content=_FILL_FROM_SD_SYSTEM),
+        HumanMessage(content=user_msg),
+    ])
+    body = (raw.content if hasattr(raw, "content") else str(raw)).strip()
+    body = re.sub(
+        rf"^\s*##\s*{re.escape(gap.section_title)}\s*\n+",
+        "",
+        body,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    if not body:
+        return _escalate(gap, qid=qid, page_uri=page_uri, best_guess=None)
+    section_md = f"## {gap.section_title}\n\n{body}\n"
+    log.info(
+        f"_fill_from_sd_summary: composed {gap.section_title!r} for {page_uri} "
+        f"[strategy=sd-mcp]"
+    )
+    return FilledGap(
+        gap=gap,
+        section_md=section_md,
+        sources=[{"source_uri": "sd-mcp://list_pages", "kind": "sd-summary"}],
         is_sme_placeholder=False,
         question_id=qid,
     )

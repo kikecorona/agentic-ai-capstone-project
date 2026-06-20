@@ -158,13 +158,25 @@ function passes(ev) {
   return filters.info;
 }
 
-// Reverse without mutating the parent's array, then apply the level
-// filter. ``[...arr].reverse()`` is O(n); Vue re-runs this computed
-// whenever the source array reactively changes (push from EventSource
-// handler triggers it) OR a filter toggle flips.
-const reversedEvents = computed(() =>
-  [...props.events].reverse().filter(passes),
-);
+// Sort by event timestamp descending (newest first), then apply the
+// level filter. We use ``timestamp`` first (set on every event by
+// the orchestrator's ``_tail_combined_events`` for both kinds) and
+// fall back to ``started_at`` for older LLM rows that pre-date the
+// alias. **Why not just reverse arrival order?** The merged SSE feed
+// can deliver out-of-order events across poll cycles (a late LLM row
+// with an older ``started_at`` arrives after a newer service row),
+// so a plain reverse leaves the late row stranded mid-list. Sorting
+// by timestamp puts every event in the right place regardless of
+// when it arrived. The filter doesn't affect order.
+const reversedEvents = computed(() => {
+  const items = [...props.events];
+  items.sort((a, b) => {
+    const ta = a.timestamp ?? a.started_at ?? 0;
+    const tb = b.timestamp ?? b.started_at ?? 0;
+    return tb - ta;
+  });
+  return items.filter(passes);
+});
 
 const filteredCount = computed(() => reversedEvents.value.length);
 

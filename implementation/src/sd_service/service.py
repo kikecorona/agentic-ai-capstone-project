@@ -447,6 +447,34 @@ class SDService:
                 (prior.service if prior else None)
                 or _service_from_page_uri(page_uri, self._page_prefix)
             )
+            # Data-store / category pages have a URI like
+            # ``database/<svc>-db.md`` that doesn't directly name a
+            # service. Try common DB-page naming conventions to resolve
+            # the owning service so we can pull its analysis as
+            # side-info (otherwise schema/data-store pages get no
+            # source-code context and escalate every gap).
+            try:
+                known_services = set(self._sources.list_services())
+            except Exception as exc:  # noqa: BLE001
+                log.warn(f"_refresh_one_page: list_services failed: {exc}")
+                known_services = set()
+            if service_name and known_services and service_name not in known_services:
+                candidates = []
+                last = service_name.split("/")[-1]
+                for suffix in ("-db", "_db", "-database", "_database"):
+                    if last.endswith(suffix):
+                        candidates.append(last[: -len(suffix)])
+                for prefix in ("db-", "db_"):
+                    if last.startswith(prefix):
+                        candidates.append(last[len(prefix):])
+                for cand in candidates:
+                    if cand in known_services:
+                        log.info(
+                            f"_refresh_one_page: {page_uri} resolved owning service "
+                            f"{service_name!r} → {cand!r} via DB-naming convention"
+                        )
+                        service_name = cand
+                        break
 
             # Pull fresh source-code analysis as side-info (best-effort —
             # missing source code is non-fatal; the gap-fill loop will
@@ -465,6 +493,12 @@ class SDService:
                             for e in (analysis.endpoints or [])[:24]
                         ],
                         "downstream_services": list((analysis.downstream_calls or [])[:24]),
+                        "data_stores": [
+                            d.to_dict() for d in (analysis.data_stores or [])
+                        ],
+                        "data_structures": [
+                            d.to_dict() for d in (analysis.data_structures or [])[:12]
+                        ],
                         "source_revision": analysis.source_revision,
                     }
                 except Exception as exc:  # noqa: BLE001
@@ -509,16 +543,29 @@ class SDService:
                 for qid, info in prior.answered_sme_blocks.items():
                     answered_blocks.setdefault(qid, info)
 
-            # Detect gaps via the LLM judge.
+            # Detect gaps via the LLM judge — classifies the page kind
+            # (service / architecture-overview / data-flow / data-store /
+            # other) using the URI as a hint plus the source-code
+            # analysis as content, then proposes per-kind sections
+            # tailored to whether the page is even supposed to talk
+            # about endpoints / schemas / etc.
             llm = self._get_chat_llm()
-            gap_plan = detect_gaps(existing, page_title=title, llm=llm)
+            gap_plan = detect_gaps(
+                existing,
+                page_uri=page_uri,
+                page_title=title,
+                analysis_summary=analysis_summary or None,
+                llm=llm,
+            )
             log.info(
-                f"_refresh_one_page: {page_uri} → {len(gap_plan.gaps)} gap(s); "
+                f"_refresh_one_page: {page_uri} kind={gap_plan.page_kind} "
+                f"→ {len(gap_plan.gaps)} gap(s); "
                 f"answered={len(answered_blocks)} force={force}"
             )
             span.set_attribute("gap_count", len(gap_plan.gaps))
             span.set_attribute("answered_block_count", len(answered_blocks))
             span.set_attribute("is_substantive", gap_plan.is_substantive)
+            span.set_attribute("page_kind", gap_plan.page_kind)
 
             # Fill each gap with the analysis summary as side-info.
             filled = []
@@ -531,6 +578,7 @@ class SDService:
                     service=service_name,
                     analysis_summary=analysis_summary,
                     rag=self._rag,
+                    llm=llm,
                     answered_sme_blocks=answered_blocks,
                 )
                 filled.append(fg)
@@ -547,8 +595,17 @@ class SDService:
             filled_substantive = sum(
                 1 for fg in filled if not fg.is_sme_placeholder
             )
+            # How many gaps went source-first vs RAG vs SME — useful
+            # signal on the dashboard when triaging "why are pages
+            # still escalating?". Only counts the gaps the detector
+            # *intended* to source-fill; not the fall-through case
+            # where source failed and we re-tried via RAG.
+            source_intended = sum(1 for g in gap_plan.gaps if g.fill_strategy == "source")
+            rag_intended = sum(1 for g in gap_plan.gaps if g.fill_strategy != "source")
             span.set_attribute("filled_count", filled_substantive)
             span.set_attribute("escalated_count", len(escalations))
+            span.set_attribute("source_intended_count", source_intended)
+            span.set_attribute("rag_intended_count", rag_intended)
 
             if filled:
                 sections = [(fg.gap.section_title, fg.section_md) for fg in filled]
@@ -738,6 +795,10 @@ class SDService:
                 for e in (analysis.endpoints or [])[:24]
             ],
             "downstream_services": list((analysis.downstream_calls or [])[:24]),
+            "data_stores": [d.to_dict() for d in (analysis.data_stores or [])],
+            "data_structures": [
+                d.to_dict() for d in (analysis.data_structures or [])[:12]
+            ],
             "source_revision": analysis.source_revision,
         }
         sd_revision = side_info_revision(analysis_summary)

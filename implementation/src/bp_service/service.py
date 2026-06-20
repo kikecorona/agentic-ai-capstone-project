@@ -414,18 +414,33 @@ class BPService:
                 for qid, info in prior.answered_sme_blocks.items():
                     answered_blocks.setdefault(qid, info)
 
-            # Detect gaps via the LLM judge.
+            # Detect gaps via the LLM judge — classifies the page kind
+            # (product / business-case / flow / strategy / other) using
+            # the URI as a hint plus the SD MCP cross-reference summary
+            # as content, then proposes per-kind sections tailored to
+            # whether the page is even supposed to talk about
+            # integrations / use cases / etc.
             llm = self._get_chat_llm()
-            gap_plan = detect_gaps(existing, page_title=title, llm=llm)
+            gap_plan = detect_gaps(
+                existing,
+                page_uri=page_uri,
+                page_title=title,
+                sd_summary=sd_summary or None,
+                llm=llm,
+            )
             log.info(
-                f"_refresh_one: {page_uri} → {len(gap_plan.gaps)} gap(s); "
+                f"_refresh_one: {page_uri} kind={gap_plan.page_kind} "
+                f"→ {len(gap_plan.gaps)} gap(s); "
                 f"answered={len(answered_blocks)} force={force}"
             )
             span.set_attribute("gap_count", len(gap_plan.gaps))
             span.set_attribute("answered_block_count", len(answered_blocks))
             span.set_attribute("is_substantive", gap_plan.is_substantive)
+            span.set_attribute("page_kind", gap_plan.page_kind)
 
-            # Fill each gap.
+            # Fill each gap. The SD summary doubles as side-info for the
+            # ``sd-mcp``-strategy gaps (compose directly from the SD
+            # cross-reference rather than RAG).
             filled = []
             escalations: list[PageEscalation] = []
             for gap in gap_plan.gaps:
@@ -434,6 +449,7 @@ class BPService:
                     page_uri=page_uri,
                     page_title=title,
                     rag=self._rag,
+                    sd_summary=sd_summary or None,
                     answered_sme_blocks=answered_blocks,
                 )
                 filled.append(fg)
@@ -450,8 +466,17 @@ class BPService:
             filled_substantive = sum(
                 1 for fg in filled if not fg.is_sme_placeholder
             )
+            # Per-strategy split — useful for triaging "are we hitting
+            # the SD-MCP path enough?". ``sd_intended`` counts gaps the
+            # detector tagged source-fillable; ``rag_intended`` is the
+            # rest. The fall-through case (SD path failed → RAG)
+            # increments both is fine for a POC dashboard.
+            sd_intended = sum(1 for g in gap_plan.gaps if g.fill_strategy == "sd-mcp")
+            rag_intended = sum(1 for g in gap_plan.gaps if g.fill_strategy != "sd-mcp")
             span.set_attribute("filled_count", filled_substantive)
             span.set_attribute("escalated_count", len(escalations))
+            span.set_attribute("sd_intended_count", sd_intended)
+            span.set_attribute("rag_intended_count", rag_intended)
 
             if filled:
                 sections = [(fg.gap.section_title, fg.section_md) for fg in filled]

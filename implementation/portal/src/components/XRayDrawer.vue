@@ -67,36 +67,76 @@
         content-class="xray-refresh-menu"
       >
         <q-tooltip class="bg-grey-9">
-          Pick a refresh mode: changed-only or force re-index
+          Pick a domain (SD or BP) and a mode (changed-only or force).
+          Run SD first; once it lands, run BP — that lets BP enrich
+          against fresh SD cross-references and surfaces SD's SME
+          questions before BP even starts.
         </q-tooltip>
         <q-list>
+          <q-item-label header class="menu-header">
+            System Design (SD)
+          </q-item-label>
           <q-item
             clickable
             v-close-popup
-            @click="onRefreshClick({ force: false })"
+            @click="onRefreshClick({ force: false, domain: 'sd' })"
           >
             <q-item-section avatar>
               <q-icon name="refresh" color="accent" />
             </q-item-section>
             <q-item-section>
-              <q-item-label>Refresh changed</q-item-label>
+              <q-item-label>Refresh SD changed</q-item-label>
               <q-item-label caption>
-                Skip docs whose content hash matches the inventory
+                Skip pages whose content hash + side-info both match
               </q-item-label>
             </q-item-section>
           </q-item>
           <q-item
             clickable
             v-close-popup
-            @click="onRefreshClick({ force: true })"
+            @click="onRefreshClick({ force: true, domain: 'sd' })"
           >
             <q-item-section avatar>
               <q-icon name="autorenew" color="warning" />
             </q-item-section>
             <q-item-section>
-              <q-item-label>Force re-index</q-item-label>
+              <q-item-label>Force re-index SD</q-item-label>
               <q-item-label caption>
-                Re-run the pipeline on every doc, bypassing skip-unchanged
+                Re-run the SD pipeline on every page, bypassing skip-unchanged
+              </q-item-label>
+            </q-item-section>
+          </q-item>
+          <q-separator />
+          <q-item-label header class="menu-header">
+            Business &amp; Product (BP)
+          </q-item-label>
+          <q-item
+            clickable
+            v-close-popup
+            @click="onRefreshClick({ force: false, domain: 'bp' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="refresh" color="accent" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>Refresh BP changed</q-item-label>
+              <q-item-label caption>
+                Recommended after SD finishes — uses fresh SD cross-refs
+              </q-item-label>
+            </q-item-section>
+          </q-item>
+          <q-item
+            clickable
+            v-close-popup
+            @click="onRefreshClick({ force: true, domain: 'bp' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="autorenew" color="warning" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>Force re-index BP</q-item-label>
+              <q-item-label caption>
+                Re-run the BP pipeline on every page, bypassing skip-unchanged
               </q-item-label>
             </q-item-section>
           </q-item>
@@ -146,6 +186,17 @@
           <div class="meta-grid">
             <div class="meta-key">task id</div>
             <div class="meta-val">{{ refreshTaskId || "—" }}</div>
+            <div class="meta-key">domain</div>
+            <div class="meta-val">
+              <q-chip
+                dense
+                square
+                :color="refreshDomainColor"
+                text-color="dark"
+              >
+                {{ refreshDomainLabel }}
+              </q-chip>
+            </div>
             <div class="meta-key">mode</div>
             <div class="meta-val">
               <q-chip
@@ -299,6 +350,7 @@ function clear() {
 // status (or returns 404 from the orchestrator after a restart).
 const REFRESH_KEY = "xray_refreshTaskId";
 const REFRESH_FORCE_KEY = "xray_refreshForce";
+const REFRESH_DOMAIN_KEY = "xray_refreshDomain";
 const COOKIE_MAX_AGE_S = 24 * 60 * 60; // 24 hours
 const POLL_INTERVAL_MS = 1500;
 const TERMINAL_STATUSES = new Set(["completed", "failed"]);
@@ -321,6 +373,7 @@ function _deleteCookie(name) {
 
 const refreshTaskId = ref(_readCookie(REFRESH_KEY) || "");
 const refreshForce = ref(_readCookie(REFRESH_FORCE_KEY) === "1");
+const refreshDomain = ref(_readCookie(REFRESH_DOMAIN_KEY) || "both");
 const refreshTask = ref(null);
 const refreshError = ref("");
 const refreshLoading = ref(false);
@@ -342,6 +395,24 @@ const refreshStatusColor = computed(() => {
   return "grey-5";
 });
 
+// Domain chip — distinct color per domain so the operator can tell at
+// a glance which leg(s) of the pipeline this task is hitting. Falls
+// back to ``both`` for older cookies that pre-date the per-domain
+// split.
+const refreshDomainLabel = computed(() => {
+  const d = (refreshDomain.value || "both").toLowerCase();
+  if (d === "sd") return "SD only";
+  if (d === "bp") return "BP only";
+  return "SD + BP";
+});
+
+const refreshDomainColor = computed(() => {
+  const d = (refreshDomain.value || "both").toLowerCase();
+  if (d === "sd") return "info";
+  if (d === "bp") return "purple-4";
+  return "accent";
+});
+
 async function onRefreshClick(opts = {}) {
   // Already running → just open the dialog onto the existing task.
   if (refreshInFlight.value && refreshTaskId.value) {
@@ -350,22 +421,26 @@ async function onRefreshClick(opts = {}) {
   }
   // No in-flight task → fire a new POST /v1/refresh.
   const force = !!opts.force;
+  const domain = opts.domain || "both";
   refreshLoading.value = true;
   refreshError.value = "";
   refreshTask.value = null;
   refreshForce.value = force;
+  refreshDomain.value = domain;
   try {
     const res = await oc.post("/v1/refresh", {
       event_type: "trigger_refresh",
       change_kind: "modified",
       source: "portal-xray",
       force,
+      domain,
     });
     const data = res.data || {};
     if (!data.task_id) throw new Error("no task_id in response");
     refreshTaskId.value = data.task_id;
     _writeCookie(REFRESH_KEY, data.task_id);
     _writeCookie(REFRESH_FORCE_KEY, force ? "1" : "0");
+    _writeCookie(REFRESH_DOMAIN_KEY, domain);
     // Seed task ref with the accept response so the dialog has
     // something to render before the first poll lands.
     refreshTask.value = {
@@ -400,6 +475,7 @@ async function pollOnce() {
       // dialog stays open (operator dismisses manually) so the result
       // is visible after completion.
       _deleteCookie(REFRESH_KEY);
+      _deleteCookie(REFRESH_DOMAIN_KEY);
       _deleteCookie(REFRESH_FORCE_KEY);
       if (refreshTask.value.status === "failed") {
         refreshError.value =
@@ -414,6 +490,7 @@ async function pollOnce() {
       console.warn(`[XRay] task ${refreshTaskId.value} not found — clearing`);
       stopPoll();
       _deleteCookie(REFRESH_KEY);
+      _deleteCookie(REFRESH_DOMAIN_KEY);
       _deleteCookie(REFRESH_FORCE_KEY);
       refreshError.value = "task not found on orchestrator (restart?)";
       refreshTaskId.value = "";

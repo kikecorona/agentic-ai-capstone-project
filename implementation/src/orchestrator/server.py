@@ -104,6 +104,13 @@ class RefreshRequest(BaseModel):
     # where the operator wants to validate the pipeline end-to-end on
     # an already-indexed corpus.
     force: bool = Field(default=False)
+    # Per-domain dispatch knob. ``None`` / ``"both"`` → fan out to both
+    # specialists (legacy default). ``"sd"`` → SD only. ``"bp"`` → BP
+    # only. The portal uses these to break the refresh into two
+    # sequential per-domain calls so SME questions from SD become
+    # visible BEFORE BP's leg even starts (§9.4.2 → see also the
+    # orchestrator's ``_run_refresh_task`` ordering).
+    domain: str | None = Field(default=None)
 
 
 class RefreshResponse(BaseModel):
@@ -418,18 +425,83 @@ def build_app(
 
         Reads the OTel SQLite store directly (no MCP round-trip) since
         we're already inside the orchestrator process and the wire
-        contract is identical."""
+        contract is identical.
+
+        Augmented with an ``llm`` section sourced from the audit DB's
+        ``llm_calls`` table — ``LLMCallLog.summarise_by_module`` already
+        returns per-module counts/error/p50/p95/mean/max so the Agent
+        Metrics dashboard can render LLM latency without a second round
+        trip.
+        """
         from src.otel_mcp.store import SpanStore  # local import to keep portal-free boots clean
+        from src.shared.llm_log import LLMCallLog
 
         otel_db = os.environ.get("OTEL_DB_PATH", "./data/otel/spans.db")
         store = SpanStore(otel_db)
-        return store.get_metrics(service=service, since=since, until=until)
+        out = store.get_metrics(service=service, since=since, until=until)
+
+        # LLM aggregates (per-module + an overall roll-up). Failure here
+        # must not poison the whole metrics payload — the OTel half is
+        # still useful on its own.
+        try:
+            llm_db = os.environ.get("AUDIT_DB_PATH", "./data/audit/log.db")
+            llm_log = LLMCallLog(llm_db)
+            per_module = llm_log.summarise_by_module(since=since, until=until)
+            out["llm"] = {
+                "by_module": per_module,
+                "overall": _llm_overall_rollup(per_module),
+            }
+        except Exception as exc:  # noqa: BLE001
+            out["llm"] = {"by_module": {}, "overall": {}, "error": str(exc)}
+
+        return out
 
     return app
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _llm_overall_rollup(per_module: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Roll the per-module LLM summary into a single overall row.
+
+    Counts and errors sum directly. Latency p50 / p95 are recomputed
+    across every module's call list — the per-module dict only carries
+    pre-computed quantiles, but a count-weighted re-quantile is close
+    enough for a dashboard headline (true p95 needs raw samples; this
+    over-weights modules that ran many slow calls without distorting
+    the overall shape).
+    """
+    if not per_module:
+        return {"count": 0, "errors": 0, "latency_ms": {"p50": 0, "p95": 0, "mean": 0, "max": 0}}
+    total = sum(int(v.get("count", 0)) for v in per_module.values())
+    errors = sum(int(v.get("errors", 0)) for v in per_module.values())
+    if not total:
+        return {"count": 0, "errors": errors, "latency_ms": {"p50": 0, "p95": 0, "mean": 0, "max": 0}}
+    weighted_p50 = 0.0
+    weighted_p95 = 0.0
+    weighted_mean = 0.0
+    overall_max = 0.0
+    for v in per_module.values():
+        n = int(v.get("count", 0))
+        if not n:
+            continue
+        lat = v.get("latency_ms", {}) or {}
+        weighted_p50 += float(lat.get("p50", 0) or 0) * n
+        weighted_p95 += float(lat.get("p95", 0) or 0) * n
+        weighted_mean += float(lat.get("mean", 0) or 0) * n
+        overall_max = max(overall_max, float(lat.get("max", 0) or 0))
+    return {
+        "count": total,
+        "errors": errors,
+        "latency_ms": {
+            "p50": weighted_p50 / total,
+            "p95": weighted_p95 / total,
+            "mean": weighted_mean / total,
+            "max": overall_max,
+        },
+    }
+
 
 def _load_json_mapping(path: str | os.PathLike[str] | None) -> dict[str, list[dict[str, Any]]]:
     if not path:

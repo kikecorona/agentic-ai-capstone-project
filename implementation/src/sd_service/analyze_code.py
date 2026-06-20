@@ -79,7 +79,7 @@ class Endpoint:
 @dataclass
 class DataStructure:
     name: str
-    kind: str            # "dataclass" | "type_alias"
+    kind: str            # "dataclass" | "type_alias" | "pydantic"
     fields: list[dict[str, Any]]
     source_path: str
 
@@ -89,6 +89,45 @@ class DataStructure:
             "kind": self.kind,
             "fields": list(self.fields),
             "source_path": self.source_path,
+        }
+
+
+@dataclass
+class DataStore:
+    """An in-memory or persisted data store the service owns. Used by
+    the enrichment pipeline to fill SD ``data-store`` page schemas
+    without going through RAG.
+
+    The POC detects three shapes:
+
+    * **dict / list / set** module-level variables used as in-memory
+      state (pear-store pattern: ``users = {}; users[id] = {...}``).
+    * **SQLAlchemy ``Table(...)``** declarations (when the project
+      uses SA core).
+    * **CREATE TABLE** statements found in string literals.
+
+    ``fields`` is the union of observed field/column names across all
+    detection paths. ``sample_values`` carries representative initial
+    values when present (a literal init dict, a ``Column("id", ...)``
+    type argument, etc.) so the page composer can include type hints.
+    """
+    name: str
+    kind: str            # "dict" | "list" | "set" | "sqlite_table" | "sqlalchemy_table"
+    fields: list[str] = field(default_factory=list)
+    field_types: dict[str, str] = field(default_factory=dict)
+    source_path: str = ""
+    line: int = 0
+    sample_values: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "fields": list(self.fields),
+            "field_types": dict(self.field_types),
+            "source_path": self.source_path,
+            "line": self.line,
+            "sample_values": dict(self.sample_values),
         }
 
 
@@ -129,6 +168,7 @@ class ServiceAnalysis:
     source_revision: str
     endpoints: list[Endpoint] = field(default_factory=list)
     data_structures: list[DataStructure] = field(default_factory=list)
+    data_stores: list[DataStore] = field(default_factory=list)
     downstream_calls: list[DownstreamCall] = field(default_factory=list)
     prose: dict[str, str] = field(default_factory=dict)
     parse_failures: list[ParseFailure] = field(default_factory=list)
@@ -140,6 +180,7 @@ class ServiceAnalysis:
             "source_revision": self.source_revision,
             "endpoints": [e.to_dict() for e in self.endpoints],
             "data_structures": [d.to_dict() for d in self.data_structures],
+            "data_stores": [d.to_dict() for d in self.data_stores],
             "downstream_calls": [c.to_dict() for c in self.downstream_calls],
             "prose": dict(self.prose),
             "parse_failures": [p.to_dict() for p in self.parse_failures],
@@ -219,7 +260,15 @@ def _extract_dataclass(node: ast.ClassDef, source_path: str) -> DataStructure | 
         or isinstance(d, ast.Attribute) and d.attr == "dataclass"
         for d in node.decorator_list
     )
-    if not is_dataclass:
+    # Pydantic: any base named ``BaseModel`` (or ``pydantic.BaseModel``)
+    # gives the same field shape as a dataclass — annotated assignments
+    # in the class body are the schema.
+    is_pydantic = any(
+        (isinstance(b, ast.Name) and b.id == "BaseModel")
+        or (isinstance(b, ast.Attribute) and b.attr == "BaseModel")
+        for b in node.bases
+    )
+    if not is_dataclass and not is_pydantic:
         return None
     fields: list[dict[str, Any]] = []
     for stmt in node.body:
@@ -229,7 +278,8 @@ def _extract_dataclass(node: ast.ClassDef, source_path: str) -> DataStructure | 
                 "type": _annotation_text(stmt.annotation),
                 "has_default": stmt.value is not None,
             })
-    return DataStructure(name=node.name, kind="dataclass", fields=fields, source_path=source_path)
+    kind = "dataclass" if is_dataclass else "pydantic"
+    return DataStructure(name=node.name, kind=kind, fields=fields, source_path=source_path)
 
 
 def _annotation_text(node: ast.AST | None) -> str | None:
@@ -392,6 +442,291 @@ def _is_sqlite_connect_call(node: ast.AST | None) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Data-store extraction — module-level state stores + SQL CREATE TABLE +
+# SQLAlchemy Table(...) declarations
+# ---------------------------------------------------------------------------
+
+# Module-level names that are obviously NOT data stores: typing aliases,
+# logger handles, app/route registrations, regex patterns. Skipping
+# these saves the LLM compose call from inventing a "logger schema".
+_NOT_A_STORE_NAMES = {
+    "app", "bp", "blueprint", "router", "log", "logger", "logging",
+    "config", "settings", "metadata", "engine", "Base",
+    "__all__", "__version__",
+}
+
+
+def _is_container_literal(node: ast.AST | None) -> str | None:
+    """Return ``"dict"`` / ``"list"`` / ``"set"`` if ``node`` is a
+    container literal (or empty container constructor); else ``None``."""
+    if isinstance(node, ast.Dict):
+        return "dict"
+    if isinstance(node, ast.List):
+        return "list"
+    if isinstance(node, ast.Set):
+        return "set"
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        if node.func.id == "dict":
+            return "dict"
+        if node.func.id == "list":
+            return "list"
+        if node.func.id == "set":
+            return "set"
+    return None
+
+
+def _annotation_implies_container(node: ast.AST | None) -> str | None:
+    """``users: dict[str, dict] = {}`` → ``"dict"``. Best-effort."""
+    if node is None:
+        return None
+    text = _annotation_text(node) or ""
+    head = text.split("[", 1)[0].strip().lower()
+    if head in {"dict", "list", "set", "frozenset", "tuple"}:
+        return head if head != "frozenset" else "set"
+    return None
+
+
+def _dict_literal_keys(node: ast.AST) -> list[str]:
+    """Pull string-keyed field names from a dict literal. Non-string
+    keys (computed) are ignored — they don't tell us a schema."""
+    out: list[str] = []
+    if not isinstance(node, ast.Dict):
+        return out
+    for k in node.keys:
+        if isinstance(k, ast.Constant) and isinstance(k.value, str):
+            out.append(k.value)
+        elif isinstance(k, ast.Str):  # pragma: no cover — pre-3.8 leftovers
+            out.append(k.s)
+    return out
+
+
+def _dict_literal_field_types(node: ast.AST) -> dict[str, str]:
+    """Best-effort type hints from dict-literal *values*: a string value
+    → ``"str"``, an int → ``"int"``, etc. Used to label inferred schema
+    fields when the source has no explicit type annotation."""
+    out: dict[str, str] = {}
+    if not isinstance(node, ast.Dict):
+        return out
+    for k, v in zip(node.keys, node.values):
+        if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
+            continue
+        if isinstance(v, ast.Constant):
+            t = type(v.value).__name__
+            if t == "NoneType":
+                t = "Optional[str]"
+            out[k.value] = t
+        elif isinstance(v, ast.List):
+            out[k.value] = "list"
+        elif isinstance(v, ast.Dict):
+            out[k.value] = "dict"
+        elif isinstance(v, ast.Call) and isinstance(v.func, ast.Name):
+            out[k.value] = v.func.id
+    return out
+
+
+_CREATE_TABLE_RX = re.compile(
+    r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?P<name>[A-Za-z_][A-Za-z0-9_]*)[`\"\]]?\s*\((?P<body>.*?)\)\s*;?",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_create_table(sql: str) -> tuple[str, list[str], dict[str, str]] | None:
+    """Tiny CREATE TABLE parser — table name + column list. Misses
+    constraint clauses, but the page-composer doesn't care."""
+    m = _CREATE_TABLE_RX.search(sql)
+    if not m:
+        return None
+    name = m.group("name")
+    body = m.group("body")
+    cols: list[str] = []
+    types: dict[str, str] = {}
+    # Split on commas at depth 0 (so foreign-key clauses don't break us).
+    depth = 0
+    parts: list[str] = []
+    cur: list[str] = []
+    for ch in body:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur).strip()); cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        parts.append("".join(cur).strip())
+    for part in parts:
+        if not part:
+            continue
+        # Skip table-level constraints.
+        head = part.split(None, 1)[0].lower()
+        if head in {"primary", "foreign", "unique", "check", "constraint", "index"}:
+            continue
+        toks = part.split(None, 2)
+        col = toks[0].strip("`\"[]")
+        col_type = toks[1] if len(toks) > 1 else "?"
+        cols.append(col)
+        types[col] = col_type
+    return name, cols, types
+
+
+def _is_sqlalchemy_table_call(node: ast.AST | None) -> bool:
+    """``Table("name", metadata, Column(...), ...)`` from SA core."""
+    if not isinstance(node, ast.Call):
+        return False
+    f = node.func
+    if isinstance(f, ast.Name) and f.id == "Table":
+        return True
+    if isinstance(f, ast.Attribute) and f.attr == "Table":
+        return True
+    return False
+
+
+def _columns_from_sqlalchemy_table(call: ast.Call) -> tuple[list[str], dict[str, str]]:
+    """Pull ``Column("name", Type, ...)`` triples out of a Table call."""
+    cols: list[str] = []
+    types: dict[str, str] = {}
+    for arg in call.args[2:]:
+        if not (isinstance(arg, ast.Call)
+                and ((isinstance(arg.func, ast.Name) and arg.func.id == "Column")
+                     or (isinstance(arg.func, ast.Attribute) and arg.func.attr == "Column"))):
+            continue
+        if not arg.args:
+            continue
+        first = arg.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            col = first.value
+            cols.append(col)
+            t = arg.args[1] if len(arg.args) > 1 else None
+            if t is not None:
+                if isinstance(t, ast.Name):
+                    types[col] = t.id
+                elif isinstance(t, ast.Call) and isinstance(t.func, ast.Name):
+                    types[col] = t.func.id
+                elif isinstance(t, ast.Attribute):
+                    types[col] = t.attr
+    return cols, types
+
+
+def extract_data_stores(tree: ast.Module, source_path: str) -> list[DataStore]:
+    """Walk the module AST for in-memory data stores, SQL CREATE TABLE
+    statements, and SQLAlchemy ``Table(...)`` declarations. Returns a
+    list of DataStore entries — duplicates across files get merged in
+    ``analyze_service`` further down.
+    """
+    stores: dict[str, DataStore] = {}
+
+    # Pass 1 — module-level declarations.
+    for stmt in tree.body:
+        # ``users = {}`` or ``users = {"a": 1}``.
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target = stmt.targets[0]
+            if isinstance(target, ast.Name):
+                name = target.id
+                if name in _NOT_A_STORE_NAMES or name.startswith("_"):
+                    # Allow leading-underscore stores like _USERS — common
+                    # pattern for module-private state. Re-allow:
+                    if not (name.startswith("_") and name.lstrip("_").isupper()):
+                        if name in _NOT_A_STORE_NAMES:
+                            continue
+                # SQLAlchemy ``users = Table(...)``.
+                if _is_sqlalchemy_table_call(stmt.value):
+                    cols, types = _columns_from_sqlalchemy_table(stmt.value)
+                    table_name = (
+                        stmt.value.args[0].value
+                        if stmt.value.args and isinstance(stmt.value.args[0], ast.Constant)
+                        and isinstance(stmt.value.args[0].value, str)
+                        else name
+                    )
+                    stores[name] = DataStore(
+                        name=table_name,
+                        kind="sqlalchemy_table",
+                        fields=cols,
+                        field_types=types,
+                        source_path=source_path,
+                        line=stmt.lineno,
+                    )
+                    continue
+                # In-memory dict/list/set state.
+                kind = _is_container_literal(stmt.value)
+                if kind:
+                    fields = _dict_literal_keys(stmt.value) if kind == "dict" else []
+                    types = _dict_literal_field_types(stmt.value) if kind == "dict" else {}
+                    stores[name] = DataStore(
+                        name=name,
+                        kind=kind,
+                        fields=fields,
+                        field_types=types,
+                        source_path=source_path,
+                        line=stmt.lineno,
+                    )
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            name = stmt.target.id
+            if name in _NOT_A_STORE_NAMES:
+                continue
+            kind = (
+                _is_container_literal(stmt.value)
+                or _annotation_implies_container(stmt.annotation)
+            )
+            if kind:
+                fields = (
+                    _dict_literal_keys(stmt.value) if kind == "dict" and stmt.value else []
+                )
+                types = (
+                    _dict_literal_field_types(stmt.value) if kind == "dict" and stmt.value else {}
+                )
+                stores[name] = DataStore(
+                    name=name,
+                    kind=kind,
+                    fields=fields,
+                    field_types=types,
+                    source_path=source_path,
+                    line=stmt.lineno,
+                )
+
+    # Pass 2 — observe what gets WRITTEN into each store. Catches the
+    # pear-store pattern where the dict is initialized empty and
+    # populated later: ``users[uid] = {"id": ..., "email": ..., ...}``.
+    class _AssignWalker(ast.NodeVisitor):
+        def visit_Assign(self, node: ast.Assign) -> None:  # noqa: N802
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Subscript) and isinstance(tgt.value, ast.Name):
+                    sname = tgt.value.id
+                    if sname in stores and isinstance(node.value, ast.Dict):
+                        ds = stores[sname]
+                        for f in _dict_literal_keys(node.value):
+                            if f not in ds.fields:
+                                ds.fields.append(f)
+                        for k, v in _dict_literal_field_types(node.value).items():
+                            ds.field_types.setdefault(k, v)
+            self.generic_visit(node)
+
+    _AssignWalker().visit(tree)
+
+    # Pass 3 — string literals containing CREATE TABLE.
+    class _StringWalker(ast.NodeVisitor):
+        def visit_Constant(self, node: ast.Constant) -> None:  # noqa: N802
+            if isinstance(node.value, str) and "create table" in node.value.lower():
+                parsed = _parse_create_table(node.value)
+                if parsed is not None:
+                    table_name, cols, types = parsed
+                    key = f"sqlite::{table_name}"
+                    if key not in stores:
+                        stores[key] = DataStore(
+                            name=table_name,
+                            kind="sqlite_table",
+                            fields=cols,
+                            field_types=types,
+                            source_path=source_path,
+                            line=node.lineno,
+                        )
+
+    _StringWalker().visit(tree)
+
+    return list(stores.values())
+
+
 def _http_target(url: str) -> str | None:
     """Reduce a static URL to a service host stem so the dep graph isn't
     tied to a specific path. ``http://payments-api/charge`` →
@@ -501,6 +836,7 @@ def analyze_service(
 
     endpoints: list[Endpoint] = []
     data_structures: list[DataStructure] = []
+    data_stores: list[DataStore] = []
     calls: list[DownstreamCall] = []
     file_text: dict[str, str] = {}
     parse_failures: list[ParseFailure] = []
@@ -520,11 +856,32 @@ def analyze_service(
         endpoints.extend(v.endpoints)
         data_structures.extend(v.data_structures)
         calls.extend(v.calls)
+        # Module-level data-store extraction is a separate pass — same
+        # AST, runs after the visitor so we don't have to teach
+        # ``_ServiceVisitor`` about every shape (in-mem dict + SQLAlchemy
+        # Table + CREATE TABLE strings have different visit hooks).
+        data_stores.extend(extract_data_stores(tree, f.relative_path))
+
+    # Merge data-stores that share a name across files (rare in services
+    # with one app.py, but the reset-and-import pattern can split a
+    # store across modules). Last-write-wins on field types.
+    merged_stores: dict[tuple[str, str], DataStore] = {}
+    for ds in data_stores:
+        key = (ds.kind, ds.name)
+        if key in merged_stores:
+            existing = merged_stores[key]
+            for f in ds.fields:
+                if f not in existing.fields:
+                    existing.fields.append(f)
+            existing.field_types.update(ds.field_types)
+        else:
+            merged_stores[key] = ds
+    data_stores = list(merged_stores.values())
 
     log.info(
         f"analyze_service service={service} endpoints={len(endpoints)} "
-        f"data_structures={len(data_structures)} calls={len(calls)} "
-        f"failures={len(parse_failures)}"
+        f"data_structures={len(data_structures)} data_stores={len(data_stores)} "
+        f"calls={len(calls)} failures={len(parse_failures)}"
     )
 
     calls_by_handler: dict[str, list[DownstreamCall]] = {}
@@ -540,6 +897,7 @@ def analyze_service(
         source_revision=revision,
         endpoints=endpoints,
         data_structures=data_structures,
+        data_stores=data_stores,
         downstream_calls=calls,
         prose=prose,
         parse_failures=parse_failures,

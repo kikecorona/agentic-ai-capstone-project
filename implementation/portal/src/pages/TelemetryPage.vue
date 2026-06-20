@@ -205,6 +205,57 @@
       </div>
     </div>
 
+    <!-- LLM latency — sourced from the audit DB's llm_calls table.
+         Headline KPIs cover overall calls / error rate / p50 / p95;
+         the panel below breaks p50/p95 down per `module` so the
+         operator can see which step (rag.auto_rag.grader,
+         bp.compose_answer, …) is the slow one. -->
+    <div class="row q-col-gutter-md q-mb-md">
+      <div class="col-6 col-sm-3">
+        <kpi-card
+          label="llm calls"
+          :value="llmCallCount"
+          :sub="`${llmModuleCount} modules`"
+          accent="accent"
+        />
+      </div>
+      <div class="col-6 col-sm-3">
+        <kpi-card
+          label="llm error rate"
+          :value="formatPct(llmErrorRate)"
+          :sub="`${llmErrorCount} of ${llmCallCount} calls`"
+          :accent="llmErrorRate > 0.05 ? 'negative' : 'accent'"
+        />
+      </div>
+      <div class="col-6 col-sm-3">
+        <kpi-card
+          label="llm p50"
+          :value="`${llmP50} ms`"
+          sub="median call duration"
+          accent="accent"
+        />
+      </div>
+      <div class="col-6 col-sm-3">
+        <kpi-card
+          label="llm p95"
+          :value="`${llmP95} ms`"
+          :sub="llmSlowestModule || '—'"
+          :accent="llmP95 > 5000 ? 'warning' : 'accent'"
+        />
+      </div>
+    </div>
+
+    <div class="row q-col-gutter-md q-mb-md">
+      <div class="col-12">
+        <metrics-panel
+          title="llm latency p50 / p95 (ms, per module)"
+          :rows="llmLatencyRows"
+          empty-text="No LLM calls recorded yet — start a refresh and reload."
+          kind="latency"
+        />
+      </div>
+    </div>
+
     <!-- §9.7 metrics that need data sources outside /v1/metrics —
          render as pending placeholders so the operator can see the
          intended shape. The `source` line on each card describes
@@ -519,6 +570,47 @@ const pagesEnrichedRate = computed(() => {
   if (!total) return 0;
   return pagesEnrichedCount.value / total;
 });
+
+// ─── §9.6 LLM latency — sourced from llm_calls audit table ─────────
+// `/v1/metrics` returns `llm: { by_module: {mod: {count, errors,
+// latency_ms: {p50, p95, mean, max}}}, overall: {…} }`. Empty when
+// no calls have been recorded yet (post `reset_state.sh --logs`).
+const llmByModule = computed(() => metrics.value.llm?.by_module || {});
+const llmOverall = computed(() => metrics.value.llm?.overall || {});
+
+const llmCallCount = computed(() => llmOverall.value.count || 0);
+const llmErrorCount = computed(() => llmOverall.value.errors || 0);
+const llmModuleCount = computed(() => Object.keys(llmByModule.value).length);
+
+const llmErrorRate = computed(() => {
+  const n = llmCallCount.value;
+  if (!n) return 0;
+  return llmErrorCount.value / n;
+});
+
+const llmP50 = computed(() =>
+  Math.round(llmOverall.value.latency_ms?.p50 || 0),
+);
+
+const llmP95 = computed(() =>
+  Math.round(llmOverall.value.latency_ms?.p95 || 0),
+);
+
+// Per-module latency rows for the panel. Sorted by p95 desc so the
+// slowest module surfaces first; a `mean` field also rides along for
+// the tooltip on the bar.
+const llmLatencyRows = computed(() =>
+  Object.entries(llmByModule.value)
+    .map(([k, v]) => ({
+      key: k,
+      p50: Math.round(v.latency_ms?.p50 || 0),
+      p95: Math.round(v.latency_ms?.p95 || 0),
+      max: Math.round(v.latency_ms?.max || 0),
+    }))
+    .sort((a, b) => b.p95 - a.p95),
+);
+
+const llmSlowestModule = computed(() => llmLatencyRows.value[0]?.key || "");
 
 // ─── Helpers ────────────────────────────────────────────────────────
 function formatPct(x) {

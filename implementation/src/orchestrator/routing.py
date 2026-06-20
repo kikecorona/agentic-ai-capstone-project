@@ -99,9 +99,28 @@ def pick_dispatch_target_for_query(
 def pick_dispatch_target_for_refresh(event: dict) -> DispatchTarget:
     """Decide which specialist(s) should pick up a refresh event.
 
-    ``event`` matches the §9.4.2 envelope shape; we only look at
-    ``doc_id_or_commit_sha`` and ``source`` (treated as a URI hint).
+    ``event`` matches the §9.4.2 envelope shape. Three signal sources,
+    in priority order:
+
+      1. **Explicit ``domain``** field on the event (``"sd"`` /
+         ``"bp"`` / ``"both"``) — the UI sets this when it wants to
+         break the refresh into per-domain calls (the recommended
+         shape — see §9.4.2). Always wins.
+      2. ``doc_id_or_commit_sha`` / ``source`` URI hint — used by
+         the Update Trigger when it knows which file changed.
+      3. Default — fan out to both specialists.
     """
+    domain = (event or {}).get("domain")
+    if isinstance(domain, str):
+        d = domain.strip().lower()
+        if d in {"sd", "system-design"}:
+            return DispatchTarget(bp=False, sd=True)
+        if d in {"bp", "b&p", "business-product"}:
+            return DispatchTarget(bp=True, sd=False)
+        if d == "both":
+            return DispatchTarget(bp=True, sd=True)
+        # Unknown value → fall through to URI / default heuristics.
+
     src = (event or {}).get("doc_id_or_commit_sha") or (event or {}).get("source") or ""
     src = str(src).lower()
     if not src:

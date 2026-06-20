@@ -235,16 +235,58 @@ class OrchestratorService:
                 affected_pages: list[str] = []
                 escalations: list[dict[str, Any]] = []
                 details: list[dict[str, Any]] = []
+                queued = 0
+
+                def _queue_escalations(legs_escalations: list[dict[str, Any]], leg: str) -> int:
+                    """Open / merge a queue entry for every escalation
+                    from a single dispatch leg so the SME UI sees the
+                    questions as soon as that leg lands — without
+                    waiting for the second leg to complete. Dedup is
+                    by ``question_id``; the state layer handles
+                    merging ``originating_pages``."""
+                    queued_here = 0
+                    for env in legs_escalations:
+                        qid = env.get("question_id")
+                        if not qid:
+                            continue
+                        domain = env.get("domain")
+                        if not domain:
+                            page = env.get("originating_page")
+                            domain = owning_specialist_for_page(page) or leg
+                        pages = env.get("originating_pages") or (
+                            [env["originating_page"]] if env.get("originating_page") else []
+                        )
+                        self._state.upsert_question(
+                            question_id=qid,
+                            topic=str(env.get("topic") or "(no topic)"),
+                            question=str(env.get("question") or ""),
+                            domain=str(domain),
+                            placeholder_id=env.get("placeholder_id"),
+                            best_guess=env.get("best_guess"),
+                            retrieval_trail=env.get("retrieval_trail") or [],
+                            originating_pages=pages,
+                            assigned_sme=env.get("assigned_sme"),
+                        )
+                        queued_here += 1
+                    if queued_here:
+                        log.info(
+                            f"handle_refresh task={task_id} queued {queued_here} "
+                            f"escalation(s) from {leg} leg into pending_sme_questions"
+                        )
+                    return queued_here
 
                 # Order matters: SD runs FIRST so its `doc_index` (and
                 # therefore the `referenced_products` / endpoints used as
                 # BP's side-info) is fresh by the time BP enriches. BP's
                 # `_collect_sd_summary` and `resolve_sd_links` both call
                 # SD MCP, and a stale SD doc-index gives BP weaker
-                # cross-references and worse new-page discovery. The
-                # second leg waits on the first synchronously — we're
-                # already in a worker thread, so blocking here doesn't
-                # affect the orchestrator's REST surface.
+                # cross-references and worse new-page discovery. **SME
+                # questions are queued PER LEG**, immediately after each
+                # leg's MCP call returns — so SD's escalations appear in
+                # the portal as soon as SD finishes, without waiting on
+                # BP. (For per-domain refreshes via the new
+                # ``RefreshRequest.domain`` field, only the matching
+                # leg runs.)
                 if target.sd:
                     with self._otel.span(
                         service=SERVICE_NAME,
@@ -253,13 +295,15 @@ class OrchestratorService:
                     ) as inner:
                         sd_out = self._sd.dispatch_refresh(event=event)
                         affected_pages.extend(sd_out.get("affected_pages") or [])
-                        escalations.extend(sd_out.get("escalations") or [])
+                        sd_escalations = sd_out.get("escalations") or []
+                        escalations.extend(sd_escalations)
                         details.extend(_tag_details(sd_out.get("details") or [], "sd"))
                         inner.set_status("ok")
                         inner.set_payload_summary({
                             "affected_pages": len(sd_out.get("affected_pages") or []),
-                            "escalations": len(sd_out.get("escalations") or []),
+                            "escalations": len(sd_escalations),
                         })
+                    queued += _queue_escalations(sd_escalations, "sd")
                 if target.bp:
                     with self._otel.span(
                         service=SERVICE_NAME,
@@ -268,44 +312,15 @@ class OrchestratorService:
                     ) as inner:
                         bp_out = self._bp.dispatch_refresh(event=event)
                         affected_pages.extend(bp_out.get("affected_pages") or [])
-                        escalations.extend(bp_out.get("escalations") or [])
+                        bp_escalations = bp_out.get("escalations") or []
+                        escalations.extend(bp_escalations)
                         details.extend(_tag_details(bp_out.get("details") or [], "bp"))
                         inner.set_status("ok")
                         inner.set_payload_summary({
                             "affected_pages": len(bp_out.get("affected_pages") or []),
-                            "escalations": len(bp_out.get("escalations") or []),
+                            "escalations": len(bp_escalations),
                         })
-
-                # Open / merge a queue entry for every escalation so the
-                # SME UI can pick them up. Dedup is by ``question_id``;
-                # the state layer handles merging ``originating_pages``.
-                queued = 0
-                for env in escalations:
-                    qid = env.get("question_id")
-                    if not qid:
-                        continue
-                    domain = env.get("domain")
-                    if not domain:
-                        # Derive from the originating page URI when present.
-                        page = env.get("originating_page")
-                        domain = owning_specialist_for_page(page) or "bp"
-                    pages = env.get("originating_pages") or (
-                        [env["originating_page"]] if env.get("originating_page") else []
-                    )
-                    self._state.upsert_question(
-                        question_id=qid,
-                        topic=str(env.get("topic") or "(no topic)"),
-                        question=str(env.get("question") or ""),
-                        domain=str(domain),
-                        placeholder_id=env.get("placeholder_id"),
-                        best_guess=env.get("best_guess"),
-                        retrieval_trail=env.get("retrieval_trail") or [],
-                        originating_pages=pages,
-                        assigned_sme=env.get("assigned_sme"),
-                    )
-                    queued += 1
-                if queued:
-                    log.info(f"handle_refresh queued {queued} escalation(s) into pending_sme_questions")
+                    queued += _queue_escalations(bp_escalations, "bp")
 
                 span.set_status("ok")
                 span.set_payload_summary({
