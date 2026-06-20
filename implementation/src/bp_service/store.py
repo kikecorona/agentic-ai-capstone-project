@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS bp_doc_index (
     embedding_revision TEXT,
     open_placeholders  TEXT NOT NULL DEFAULT '[]',  -- JSON array of question_id
     referenced_services TEXT NOT NULL DEFAULT '[]', -- JSON array of service_id
+    side_info_revision TEXT,                        -- hash of SD doc-index state at last enrich
+    answered_sme_blocks TEXT NOT NULL DEFAULT '{}', -- JSON {question_id: {hash, prose}}
     metadata           TEXT NOT NULL DEFAULT '{}'   -- free-form JSON
 );
 CREATE INDEX IF NOT EXISTS idx_bp_doc_index_updated ON bp_doc_index(last_updated);
@@ -53,6 +55,14 @@ CREATE TABLE IF NOT EXISTS bp_sources_inventory (
     metadata        TEXT NOT NULL DEFAULT '{}'
 );
 """
+
+# Cheap forward migration for stores created before the side-info /
+# answered-SME columns existed. Idempotent — ALTER TABLE … ADD COLUMN
+# fails if the column is already there, which we swallow.
+_MIGRATIONS = [
+    "ALTER TABLE bp_doc_index ADD COLUMN side_info_revision TEXT",
+    "ALTER TABLE bp_doc_index ADD COLUMN answered_sme_blocks TEXT NOT NULL DEFAULT '{}'",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +80,14 @@ class DocIndexEntry:
     embedding_revision: str | None
     open_placeholders: list[str]
     referenced_services: list[str]
+    # Hash of the SD doc-index state at the time this BP page was last
+    # enriched. The skip-unchanged check trips only when both the page
+    # content and this revision are identical to the prior refresh.
+    side_info_revision: str | None = None
+    # Map of question_id → {"hash": <prose-hash>, "prose": <answered text>}
+    # for SME-answered blocks we want to preserve verbatim across
+    # subsequent refreshes (§9.5 SME flow).
+    answered_sme_blocks: dict[str, dict[str, Any]] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -83,6 +101,8 @@ class DocIndexEntry:
             "embedding_revision": self.embedding_revision,
             "open_placeholders": list(self.open_placeholders),
             "referenced_services": list(self.referenced_services),
+            "side_info_revision": self.side_info_revision,
+            "answered_sme_blocks": dict(self.answered_sme_blocks),
             "metadata": dict(self.metadata),
         }
 
@@ -97,6 +117,13 @@ class _SQLiteBacked:
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        # Forward-migration: ALTER TABLE ADD COLUMN raises OperationalError
+        # if the column already exists; swallow that so re-runs are no-ops.
+        for stmt in _MIGRATIONS:
+            try:
+                self._conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass
         self._conn.commit()
 
     def close(self) -> None:
@@ -116,8 +143,9 @@ class BPDocIndex(_SQLiteBacked):
                 INSERT INTO bp_doc_index (
                     page_uri, title, last_updated, source_documents, content_hash,
                     chunking_strategy, embedding_revision, open_placeholders,
-                    referenced_services, metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    referenced_services, side_info_revision, answered_sme_blocks,
+                    metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(page_uri) DO UPDATE SET
                     title = excluded.title,
                     last_updated = excluded.last_updated,
@@ -127,6 +155,8 @@ class BPDocIndex(_SQLiteBacked):
                     embedding_revision = excluded.embedding_revision,
                     open_placeholders = excluded.open_placeholders,
                     referenced_services = excluded.referenced_services,
+                    side_info_revision = excluded.side_info_revision,
+                    answered_sme_blocks = excluded.answered_sme_blocks,
                     metadata = excluded.metadata
                 """,
                 (
@@ -139,6 +169,8 @@ class BPDocIndex(_SQLiteBacked):
                     entry.embedding_revision,
                     json.dumps(entry.open_placeholders),
                     json.dumps(entry.referenced_services),
+                    entry.side_info_revision,
+                    json.dumps(entry.answered_sme_blocks, default=str),
                     json.dumps(entry.metadata, default=str),
                 ),
             )
@@ -211,6 +243,12 @@ class BPDocIndex(_SQLiteBacked):
 
     @staticmethod
     def _row(r: sqlite3.Row) -> DocIndexEntry:
+        # `side_info_revision` and `answered_sme_blocks` were added in a
+        # forward migration; older rows may not have them yet, so guard
+        # the column reads via Row's keys() rather than direct access.
+        keys = set(r.keys())
+        side_info_revision = r["side_info_revision"] if "side_info_revision" in keys else None
+        answered_blocks_raw = r["answered_sme_blocks"] if "answered_sme_blocks" in keys else None
         return DocIndexEntry(
             page_uri=r["page_uri"],
             title=r["title"],
@@ -221,6 +259,8 @@ class BPDocIndex(_SQLiteBacked):
             embedding_revision=r["embedding_revision"],
             open_placeholders=json.loads(r["open_placeholders"] or "[]"),
             referenced_services=json.loads(r["referenced_services"] or "[]"),
+            side_info_revision=side_info_revision,
+            answered_sme_blocks=json.loads(answered_blocks_raw or "{}"),
             metadata=json.loads(r["metadata"] or "{}"),
         )
 

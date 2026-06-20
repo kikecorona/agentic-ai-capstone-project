@@ -150,10 +150,46 @@
       </div>
     </div>
 
+    <!-- Enrichment-specific KPIs (§9.3 enrich-existing flow). -->
+    <div class="row q-col-gutter-md q-mb-md">
+      <div class="col-6 col-sm-3">
+        <kpi-card
+          label="pages enriched"
+          :value="pagesEnrichedCount"
+          :sub="`${pagesEnrichedRate ? formatPct(pagesEnrichedRate) : '—'} of ${enrichTotal} touched`"
+          accent="accent"
+        />
+      </div>
+      <div class="col-6 col-sm-3">
+        <kpi-card
+          label="pages unchanged"
+          :value="pagesUnchangedCount"
+          :sub="enrichTotal ? `${formatPct(pagesUnchangedCount / enrichTotal)} skip-rate` : '—'"
+          accent="accent"
+        />
+      </div>
+      <div class="col-6 col-sm-3">
+        <kpi-card
+          label="escalated-only pages"
+          :value="pagesEscalatedOnlyCount"
+          :sub="`${pagesEscalatedOnlyCount ? 'all gaps to SME' : 'none'}`"
+          :accent="pagesEscalatedOnlyCount > 0 ? 'warning' : 'accent'"
+        />
+      </div>
+      <div class="col-6 col-sm-3">
+        <kpi-card
+          label="new pages stubbed"
+          :value="pagesStubbedCount"
+          :sub="pagesStubbedCount ? 'awaiting next refresh' : '—'"
+          accent="accent"
+        />
+      </div>
+    </div>
+
     <div class="row q-col-gutter-md q-mb-md">
       <div class="col-12 col-md-6">
         <metrics-panel
-          title="RAG retrieve status (§9.7 RAG status distribution)"
+          title="RAG retrieve status"
           :rows="ragStatusRows"
           empty-text="No RAG retrieve spans yet."
           kind="status"
@@ -161,9 +197,9 @@
       </div>
       <div class="col-12 col-md-6">
         <metrics-panel
-          title="dispatch outcomes (escalation signal)"
+          title="dispatch + enrich outcomes (escalation signal)"
           :rows="dispatchStatusRows"
-          empty-text="No dispatch spans yet."
+          empty-text="No dispatch / enrich spans yet."
           kind="status"
         />
       </div>
@@ -366,10 +402,18 @@ const answerRegradePassRate = computed(() => {
 });
 
 // Dispatch outcomes — §9.7 escalation rate.
+// Filter widened to include `enrich_page` so the dashboard surfaces
+// per-page enrichment outcomes alongside the orchestrator/specialist
+// dispatch spans.
 const dispatchStatusRows = computed(() => {
   const out = [];
   for (const [k, v] of Object.entries(metrics.value.status_counts || {})) {
-    if (k.includes("dispatch") || k.includes("refresh") || k.includes("ingest_sme")) {
+    if (
+      k.includes("dispatch") ||
+      k.includes("refresh") ||
+      k.includes("ingest_sme") ||
+      k.includes("enrich_page")
+    ) {
       out.push({ key: k, statuses: v });
     }
   }
@@ -433,6 +477,47 @@ const totSuccessSub = computed(() => {
     for (const c of Object.values(r.statuses || {})) total += c;
   }
   return `${total} ToT span(s)`;
+});
+
+// ─── §9.3 enrich-pipeline KPIs ─────────────────────────────────────
+// Aggregate over every `enrich_page` span emitted by BP/SD specialists.
+// Status set the specialist can emit:
+//   enriched         — at least one gap was filled with substantive content
+//   escalated_only   — every gap got pushed to an SME-PLACEHOLDER
+//   unchanged        — page hash + side-info hash both unchanged → skipped
+//   stub_created     — new-page discovery wrote a fresh stub
+//   page_deleted     — page no longer on disk; cleared from index
+const enrichRows = computed(() => {
+  const out = [];
+  for (const [k, v] of Object.entries(metrics.value.status_counts || {})) {
+    if (k.endsWith(".enrich_page")) out.push({ key: k, statuses: v });
+  }
+  return out;
+});
+
+const enrichTotal = computed(() => {
+  let n = 0;
+  for (const r of enrichRows.value) {
+    for (const c of Object.values(r.statuses || {})) n += c;
+  }
+  return n;
+});
+
+function _enrichStatusCount(name) {
+  let n = 0;
+  for (const r of enrichRows.value) n += r.statuses?.[name] || 0;
+  return n;
+}
+
+const pagesEnrichedCount = computed(() => _enrichStatusCount("enriched"));
+const pagesUnchangedCount = computed(() => _enrichStatusCount("unchanged"));
+const pagesEscalatedOnlyCount = computed(() => _enrichStatusCount("escalated_only"));
+const pagesStubbedCount = computed(() => _enrichStatusCount("stub_created"));
+
+const pagesEnrichedRate = computed(() => {
+  const total = enrichTotal.value;
+  if (!total) return 0;
+  return pagesEnrichedCount.value / total;
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────

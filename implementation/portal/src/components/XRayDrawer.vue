@@ -1,21 +1,22 @@
 <template>
   <!--
-    §9.8.4 Agent X-Ray — collapsible right-side drawer content.
+    §9.8.4 Multi-Agents X-Ray — collapsible right-side drawer content.
     Subscribes to the merged `/v1/streams/events` SSE feed and renders
     every event (service log + LLM call) in a single console pane,
     descending order. Click any row → detail dialog with full text.
 
     The toolbar also exposes a refresh button that fires the
     orchestrator's `POST /v1/refresh` and tracks the resulting task
-    via `GET /v1/tasks/{id}` polling. The task id is held in
-    sessionStorage so re-clicking while a task is still running
-    re-attaches to the existing one rather than spawning a new
-    refresh.
+    via `GET /v1/tasks/{id}` polling. The task id is held in cookies
+    (24h max-age, scoped to the portal origin) so re-clicking while a
+    task is still running re-attaches to the existing one rather than
+    spawning a new refresh, and an in-flight task survives a browser
+    restart.
   -->
   <div class="x-ray-drawer column no-wrap">
     <q-toolbar class="bg-grey-9 text-white q-mb-sm">
       <q-icon :name="paused ? 'pause' : 'play_arrow'" class="q-mr-sm" />
-      <span class="retro-display">Agent X-Ray</span>
+      <span class="retro-display">Multi-Agents X-Ray</span>
       <q-space />
       <q-btn
         flat
@@ -110,11 +111,14 @@
       :status="status"
     />
 
-    <!-- Refresh progress dialog. Persistent so polling continues if
-         the operator clicks away — only the close button or a
-         terminal task status dismisses it (via the explicit close).
-         Indeterminate progress bar since /v1/tasks doesn't expose a
-         step counter; we surface task.status as the textual signal. -->
+    <!-- Refresh progress dialog. ``persistent`` keeps it from being
+         dismissed by click-outside, but the close button works at any
+         time — including while a task is in flight. The polling lives
+         on the component, not the dialog, so closing just hides the
+         UI; the ``xray_refreshTaskId`` cookie carries the in-flight
+         task across closes (and across full browser restarts) so the
+         next click on the toolbar's "running…" button re-attaches to
+         the SAME task instead of spawning a new refresh. -->
     <q-dialog v-model="refreshDialogOpen" persistent>
       <q-card class="refresh-card">
         <q-toolbar class="bg-grey-9 text-white">
@@ -126,11 +130,14 @@
             dense
             round
             icon="close"
-            :disable="refreshInFlight"
             @click="refreshDialogOpen = false"
           >
-            <q-tooltip v-if="refreshInFlight" class="bg-grey-9">
-              Wait for the task to finish before closing
+            <q-tooltip class="bg-grey-9">
+              {{
+                refreshInFlight
+                  ? "Close — task keeps running; reopen via the toolbar's “running…” button"
+                  : "Close"
+              }}
             </q-tooltip>
           </q-btn>
         </q-toolbar>
@@ -283,16 +290,37 @@ function clear() {
 }
 
 // ─── Refresh task (orchestrator /v1/refresh) ───────────────────────
-// Persisted to sessionStorage so a re-click (or a drawer re-open
-// after navigating away) re-attaches to the in-flight task instead
-// of spawning a new refresh.
-const REFRESH_KEY = "xray.refreshTaskId";
-const REFRESH_FORCE_KEY = "xray.refreshForce";
+// Persisted to **cookies** so an in-flight task survives browser
+// restarts — re-opening the tab re-attaches to the same task instead
+// of spawning a new refresh. Cookie scope is the portal origin
+// (``path=/``); a 24h max-age caps a stuck task from haunting future
+// sessions and gets reset on every write so an active task keeps
+// rolling. Cookies are cleared as soon as the task hits a terminal
+// status (or returns 404 from the orchestrator after a restart).
+const REFRESH_KEY = "xray_refreshTaskId";
+const REFRESH_FORCE_KEY = "xray_refreshForce";
+const COOKIE_MAX_AGE_S = 24 * 60 * 60; // 24 hours
 const POLL_INTERVAL_MS = 1500;
 const TERMINAL_STATUSES = new Set(["completed", "failed"]);
 
-const refreshTaskId = ref(sessionStorage.getItem(REFRESH_KEY) || "");
-const refreshForce = ref(sessionStorage.getItem(REFRESH_FORCE_KEY) === "1");
+function _readCookie(name) {
+  const safe = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = document.cookie.match(new RegExp(`(?:^|; )${safe}=([^;]*)`));
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
+function _writeCookie(name, value) {
+  document.cookie =
+    `${name}=${encodeURIComponent(value)}; ` +
+    `path=/; max-age=${COOKIE_MAX_AGE_S}; samesite=Lax`;
+}
+
+function _deleteCookie(name) {
+  document.cookie = `${name}=; path=/; max-age=0; samesite=Lax`;
+}
+
+const refreshTaskId = ref(_readCookie(REFRESH_KEY) || "");
+const refreshForce = ref(_readCookie(REFRESH_FORCE_KEY) === "1");
 const refreshTask = ref(null);
 const refreshError = ref("");
 const refreshLoading = ref(false);
@@ -336,8 +364,8 @@ async function onRefreshClick(opts = {}) {
     const data = res.data || {};
     if (!data.task_id) throw new Error("no task_id in response");
     refreshTaskId.value = data.task_id;
-    sessionStorage.setItem(REFRESH_KEY, data.task_id);
-    sessionStorage.setItem(REFRESH_FORCE_KEY, force ? "1" : "0");
+    _writeCookie(REFRESH_KEY, data.task_id);
+    _writeCookie(REFRESH_FORCE_KEY, force ? "1" : "0");
     // Seed task ref with the accept response so the dialog has
     // something to render before the first poll lands.
     refreshTask.value = {
@@ -368,11 +396,11 @@ async function pollOnce() {
       TERMINAL_STATUSES.has(refreshTask.value.status)
     ) {
       stopPoll();
-      // Clear the sessionStorage so the NEXT click starts a fresh
-      // task. The dialog stays open (operator dismisses manually) so
-      // the result is visible after completion.
-      sessionStorage.removeItem(REFRESH_KEY);
-      sessionStorage.removeItem(REFRESH_FORCE_KEY);
+      // Clear the cookies so the NEXT click starts a fresh task. The
+      // dialog stays open (operator dismisses manually) so the result
+      // is visible after completion.
+      _deleteCookie(REFRESH_KEY);
+      _deleteCookie(REFRESH_FORCE_KEY);
       if (refreshTask.value.status === "failed") {
         refreshError.value =
           refreshTask.value.error || "task failed (no detail)";
@@ -385,8 +413,8 @@ async function pollOnce() {
     if (e?.response?.status === 404) {
       console.warn(`[XRay] task ${refreshTaskId.value} not found — clearing`);
       stopPoll();
-      sessionStorage.removeItem(REFRESH_KEY);
-      sessionStorage.removeItem(REFRESH_FORCE_KEY);
+      _deleteCookie(REFRESH_KEY);
+      _deleteCookie(REFRESH_FORCE_KEY);
       refreshError.value = "task not found on orchestrator (restart?)";
       refreshTaskId.value = "";
     } else {
@@ -439,8 +467,8 @@ function formatResult(result) {
 // ─── Lifecycle ─────────────────────────────────────────────────────
 startSse();
 // Resume polling silently if a previous mount started a refresh and
-// it hasn't terminated yet — sessionStorage carries the task id
-// across drawer open/close cycles within the same browser tab.
+// it hasn't terminated yet — the cookie carries the task id across
+// drawer open/close cycles AND across full browser restarts.
 if (refreshTaskId.value) {
   startPoll();
 }
@@ -453,7 +481,7 @@ onBeforeUnmount(() => {
 <style lang="scss" scoped>
 .x-ray-drawer {
   height: 100%;
-  background: #0e0f1a;
+  background: var(--theme-bg-deep);
 }
 .retro-display {
   font-family: "VT323", "JetBrains Mono", monospace;
@@ -466,13 +494,13 @@ onBeforeUnmount(() => {
      Quasar teleports to <body> outside this component's scope token. -->
 <style lang="scss">
 .xray-refresh-menu {
-  background: #1a1a2e;
-  color: #f5e6d3;
-  border: 1px solid #ff6b35;
+  background: var(--theme-bg-page);
+  color: var(--theme-text-primary);
+  border: 1px solid var(--theme-accent-primary);
   font-family: "JetBrains Mono", monospace;
 
   .q-item {
-    color: #f5e6d3;
+    color: var(--theme-text-primary);
     min-height: 0;
   }
   .q-item:hover {
@@ -482,22 +510,22 @@ onBeforeUnmount(() => {
     opacity: 0.5;
   }
   .q-item__label {
-    color: #f5e6d3;
+    color: var(--theme-text-primary);
   }
   .q-item__label--caption {
     color: #888;
     font-size: 0.72rem;
   }
   .q-separator {
-    background: #2c2c3e;
+    background: var(--theme-bg-code);
   }
 }
 
 // ──────────────────────────────────────────── refresh task dialog
 .refresh-card {
-  background: #1a1a2e;
-  color: #f5e6d3;
-  border: 1px solid #ff6b35;
+  background: var(--theme-bg-page);
+  color: var(--theme-text-primary);
+  border: 1px solid var(--theme-accent-primary);
   width: min(560px, 92vw);
   max-width: 92vw;
   font-family: "JetBrains Mono", monospace;
@@ -508,7 +536,7 @@ onBeforeUnmount(() => {
   letter-spacing: 0.05em;
 }
 .refresh-meta {
-  background: #1c1f33;
+  background: var(--theme-bg-panel);
   padding: 12px 16px;
   font-size: 0.85rem;
 }
@@ -525,7 +553,7 @@ onBeforeUnmount(() => {
   font-size: 0.7rem;
 }
 .meta-val {
-  color: #f5e6d3;
+  color: var(--theme-text-primary);
   word-break: break-word;
 }
 .duration-hint {
@@ -536,7 +564,7 @@ onBeforeUnmount(() => {
 .refresh-running,
 .refresh-error,
 .refresh-result {
-  background: #0e0f1a;
+  background: var(--theme-bg-deep);
   padding: 12px 16px;
 }
 .running-line {
@@ -546,7 +574,7 @@ onBeforeUnmount(() => {
   font-size: 0.85rem;
 }
 .section-label {
-  color: #ffd600;
+  color: var(--theme-accent-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-size: 0.7rem;
@@ -556,9 +584,9 @@ onBeforeUnmount(() => {
   color: #ff5252;
 }
 .refresh-pre {
-  background: #11121f;
-  border-left: 3px solid #00acc1;
-  color: #f5e6d3;
+  background: var(--theme-bg-deeper);
+  border-left: 3px solid var(--theme-accent-info);
+  color: var(--theme-text-primary);
   padding: 8px 10px;
   margin: 0;
   white-space: pre-wrap;

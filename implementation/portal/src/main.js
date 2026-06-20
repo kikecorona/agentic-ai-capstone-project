@@ -16,6 +16,7 @@ import "quasar/dist/quasar.css";
 
 // Project styles.
 import "./css/app.scss";
+import "./css/themes.scss";
 import "./css/retro.scss";
 
 import App from "./App.vue";

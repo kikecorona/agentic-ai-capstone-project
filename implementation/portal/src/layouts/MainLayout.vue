@@ -2,18 +2,36 @@
   <!--
     §9.8 Documentation Portal — main layout.
     Header + 3 tabs + footer + a right-side collapsible drawer for
-    the §9.8.4 Agent X-Ray (toggled from the header). Branch selector
+    the §9.8.4 Multi-Agents X-Ray (toggled from the header). Branch selector
     sits at the toolbar level so it applies across whichever tab is
     active; X-Ray and Telemetry ignore branch.
   -->
   <q-layout view="hHh LpR fFf">
-    <q-header bordered class="bg-primary text-white" height-hint="98">
+    <q-header bordered class="text-white app-header" height-hint="98">
       <q-toolbar>
         <q-toolbar-title>
           <q-avatar>
             <img src="/logo/logo-mono-white.svg" alt="Pear Store logo" />
           </q-avatar>
           <span class="retro-display">Pear Store · Documentation Portal</span>
+          <!-- Theme toggle. Sits inline with the title so it's
+               immediately accessible — orange ↔ phosphor green. -->
+          <q-btn
+            flat
+            dense
+            round
+            :icon="settings.theme === 'green' ? 'wb_sunny' : 'desktop_windows'"
+            class="q-ml-sm theme-toggle"
+            @click="settings.toggleTheme()"
+          >
+            <q-tooltip class="bg-grey-9">
+              {{
+                settings.theme === "green"
+                  ? "Switch to 80s orange retro theme"
+                  : "Switch to phosphor-green CRT theme"
+              }}
+            </q-tooltip>
+          </q-btn>
         </q-toolbar-title>
 
         <!-- §9.8.3 branch selector. -->
@@ -31,7 +49,7 @@
           @click="xrayOpen = !xrayOpen"
         >
           <q-tooltip class="bg-grey-9">
-            {{ xrayOpen ? "Close Agent X-Ray" : "Open Agent X-Ray" }}
+            {{ xrayOpen ? "Close Multi-Agents X-Ray" : "Open Multi-Agents X-Ray" }}
           </q-tooltip>
         </q-btn>
       </q-toolbar>
@@ -56,7 +74,7 @@
       <router-view />
     </q-page-container>
 
-    <!-- Right-side collapsible drawer for the Agent X-Ray. `overlay`
+    <!-- Right-side collapsible drawer for the Multi-Agents X-Ray. `overlay`
          keeps it floating on top of the page content (doesn't squish
          the doc viewer). Width is operator-resizable via the handle on
          the left edge — value persists in localStorage so it survives
@@ -106,6 +124,10 @@ import { inject, onBeforeUnmount, ref } from "vue";
 import BranchSelector from "components/BranchSelector.vue";
 import ChatBubble from "components/ChatBubble.vue";
 import XRayDrawer from "components/XRayDrawer.vue";
+import { useSettingsStore } from "stores/settings.js";
+
+// Cross-tab UI state — branch selector lives here, theme toggle too.
+const settings = useSettingsStore();
 
 // Surface the orchestrator base URL in the footer so an operator can
 // quickly tell which backend the portal is wired to.
@@ -209,9 +231,15 @@ onBeforeUnmount(() => {
 .tab-row {
   width: 100%;
 }
+// Header surface — pulled out of `bg-primary` so we can colour it
+// independently per theme (orange theme keeps the iconic orange bar;
+// green theme dims to a near-black bezel so it doesn't glow).
+.app-header {
+  background: var(--theme-header-bg);
+}
 .xray-drawer-surface {
-  background: #0e0f1a;
-  border-color: #ff6b35;
+  background: var(--theme-bg-deep);
+  border-color: var(--theme-accent-primary);
 }
 // Drag handle for resizing the X-Ray drawer. Sits as a 6px-wide
 // vertical strip pinned to the drawer's left edge. Visible only on
@@ -229,6 +257,6 @@ onBeforeUnmount(() => {
 }
 .xray-resize-handle:hover,
 .xray-resize-handle:active {
-  background: rgba(255, 107, 53, 0.55);
+  background: var(--theme-accent-primary-stroke);
 }
 </style>

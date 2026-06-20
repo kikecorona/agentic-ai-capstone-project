@@ -205,13 +205,15 @@ page without any specialist-specific tuning.
 
 #### 9.2.1 Responsibilities
 
-The SD agent owns the **SD pages** in GitHub, the **SD doc index** (per-page metadata, last-known
-commit shas), and the **SD sources inventory**. It analyzes source code via the GitHub MCP,
-cross-checks telemetry via the Monitoring MCP, runs its own ToT dep-graph loop
-([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 3), generates
-service/endpoint/dependency pages with cross-references to B&P, and answers query-time questions
-about services. It does *not* embed or chunk anything itself, write into B&P pages, or talk to the
-embedding store directly — retrieval and indexing go through `RAG_MCP`.
+The SD agent owns the **SD pages** in GitHub, the **SD doc index** (per-page metadata, including
+the page's content hash, a source-code-derived `side_info_revision` snapshot, and any
+`answered_sme_blocks` preserved from prior refreshes), and the **SD sources inventory** (last-known
+commit shas of the source-code subdirectories the SD specialist analyses). It iterates over the
+existing SD pages, fills detected gaps using freshly-pulled source-code analysis (`analyze_code`
+on the matching subdir under `SD_SOURCES_GH_PATH`) plus RAG retrieval, escalates unresolvable
+gaps as `SME-PLACEHOLDER` blocks, and discovers new pages from services in source code that
+don't yet have an SD page. It does *not* embed or chunk anything itself, write into B&P pages,
+or talk to the embedding store directly — retrieval and indexing go through `RAG_MCP`.
 
 #### 9.2.2 APIs (MCP)
 
@@ -222,37 +224,60 @@ Methods exposed by `SD_MCP`:
   envelope. SD runs its query-mode graph (delegates to `RAG_MCP.retrieve` with
   `domain_filter=sd`/`both`, falls back to focused `analyze_code` if the response is
   `low_confidence`/`exhausted`) and returns a composed answer with citations.
-- `dispatch_refresh(event) -> { affected_pages, escalations }` — background-mode entry point. The
-  Orchestrator calls this with `(commit_sha or doc_id, change_kind)`. SD diffs the event against
-  its `sources_inventory`, runs its background-mode pipeline for each affected service
-  (`analyze_code` → `verify_telemetry` → ToT dep-graph → `resolve_bp_links` → `write_doc` →
-  `RAG_MCP.index(domain=sd, ...)`), and returns the list of pages it (re-)wrote plus any
-  escalation envelopes.
+- `dispatch_refresh(event) -> { affected_pages, escalations }` — background-mode entry point.
+  Iterates the **union** of existing SD pages (`documentation/sd/`) and services in
+  `SD_SOURCES_GH_PATH`. Each existing page is read, gap-detected via the LLM judge, filled from
+  RAG with the matching service's source-code analysis as side-info, and merged back in place.
+  Services with no SD page yet fall through to the original "analyze → ToT dep graph → compose"
+  path so newly-added services pick up a starter page on the next refresh.
+  `force=true` bypasses the per-page skip-unchanged check.
 - `find_services_for_product(product_id) -> [{ service, endpoint, role }]` — relational
   cross-reference, called by B&P during `resolve_sd_links`. Reads from SD's `doc_index` only — no
   LLM, no `RAG_MCP.retrieve` call.
 - `get_page(page_uri) -> { content, doc_index_entry }` — read an SD page's current content and
   metadata, called by the Orchestrator before `patch_page` and by the cross-reference validator.
+- `list_pages() -> [{ page_uri, service, referenced_products, downstream_services, ... }]` —
+  pure relational dump of the SD doc-index. Called by B&P's enrichment pipeline as side-info
+  ("which products do SD pages reference?") and by B&P's new-page discovery (products without
+  a BP page).
 - `patch_page(page_uri, question_id, replacement) -> { commit_sha }` — replace the fenced
-  `SME-PLACEHOLDER:question_id` block in the page with the SME's resolved text plus a relative
-  Markdown link. Called by the Orchestrator's `ingest_sme_reply`. Updates `open_placeholders` in
-  the SD `doc_index` and triggers `RAG_MCP.index` for the patched page.
+  `SME-PLACEHOLDER:question_id` block in the page with the SME's resolved text wrapped in a
+  matching `SME-ANSWERED:question_id` fence. The wrapping is what lets the next refresh detect
+  and preserve the answered prose verbatim instead of overwriting it. Updates
+  `open_placeholders` and `answered_sme_blocks` in the SD `doc_index` and triggers
+  `RAG_MCP.index` for the patched page.
 
 #### 9.2.3 Implementation details
 
 The SD agent is one **LangGraph** state graph whose entry router dispatches to the right path
 based on the operating mode (background vs query).
 
-*Background mode* — for each refresh task the graph walks the affected service end-to-end. It
-pulls source code via the **GitHub MCP**, runs plain code analysis (AST + regex) augmented by an
-LLM pass for the prose around each endpoint, optionally verifies inferred call patterns against
-telemetry through the **Monitoring MCP** when wired in, runs the **ToT loop**
-([Section 7.1](PROJECT.md#71-where-tot-helps-in-this-project), use case 3) to pick the best
-dependency graph among several candidates, calls the **B&P MCP** to resolve cross-references,
-writes the resulting page as Markdown into the **SD pages** in GitHub, then hands the new page to
-the RAG Service via `RAG_MCP.index(domain=sd, source_uri, document)` for chunking + embedding +
-persistence. SD's own `doc_index` records the new revision (and the `chunking_strategy` /
-`embedding_revision` returned by the RAG Service) so the next refresh knows what changed.
+*Background mode (enrich-existing)* — `dispatch_refresh` iterates the union of existing SD pages
+(`documentation/sd/<service>.md`) and services discovered in `SD_SOURCES_GH_PATH`. For every
+existing page, the agent reads the current content, recovers the service name from the page URI
+(or the `doc_index` entry), pulls a fresh source-code analysis via `analyze_code`, and asks the
+LLM judge to score the page against a fixed rubric (Overview / Endpoints / Downstream services /
+Data model / Observability / Open Questions). Each detected gap drives a focused
+`RAG_MCP.retrieve(domain_filter=both)` query — the analysis summary (endpoints + downstream
+calls) is appended as a context hint so the retriever can disambiguate. Substantive answers
+merge in via `compose.merge_into_existing`; `low_confidence` / `exhausted` retrievals get
+rendered as `SME-PLACEHOLDER` blocks (§9.5). The merged page is hashed and re-indexed via
+`RAG_MCP.index(domain=sd, source_uri=page_uri, document, content_hash)`. The agent records the
+returned `chunking_strategy`, `embedding_revision`, and a fresh `side_info_revision` (a hash
+summary of the source-code analysis used during this enrichment) in its `doc_index`.
+SME-answered prose carried forward from prior refreshes is detected via `SME-ANSWERED:question_id`
+fences and preserved verbatim, so a re-run never overwrites human-authored answers.
+
+After every existing page is enriched, the *new-service discovery* pass picks up any services
+in `SD_SOURCES_GH_PATH` that don't yet have an SD page and runs the original "compose from
+scratch" pipeline (`pull_source` → `analyze_code` → ToT dep-graph → `resolve_bp_links` →
+`write_doc` → `RAG_MCP.index`). The next refresh of those services then takes the enrich-existing
+path like any other.
+
+*Skip-unchanged* — the per-page check now keys on the SD page's own content hash plus the
+`side_info_revision`. A page is skipped only when both match the prior refresh; if the
+underlying source code changed (new endpoints, new dependencies) the SD page re-enriches even
+though its own bytes didn't change. `force=true` bypasses both checks.
 
 *Query mode* — a question routed to SD delegates retrieval to the RAG Service via
 `RAG_MCP.retrieve(query, domain_filter=sd, mode=query)` ([Section 9.1.3.1](#9131-autonomous-rag-loop)).
@@ -270,6 +295,13 @@ Query mode never escalates to an SME — that flow is reserved for background bu
 Reusing the same code-analysis node across both modes keeps the live answers consistent with what
 we documented during the last refresh — they come from the same logic. Delegating retrieval to the
 same RAG Service across B&P and SD keeps query-time behavior consistent across domains.
+
+*Telemetry* — every existing-page enrichment emits a `sd_service.enrich_page` OTel span tagged
+with `gap_count`, `filled_count`, `escalated_count`, and `is_substantive` attributes; status is
+one of `enriched` / `escalated_only` / `unchanged` / `page_deleted` / `error`. The new-service
+compose path emits the existing `sd_service.dispatch_refresh` shape. The Dashboard surfaces
+both under "pages enriched / unchanged / escalated-only / new pages stubbed" KPIs and the
+dispatch-outcomes histogram.
 
 *ReAct loop.* The outer loop is a `reason → act → observe` cycle: `reason` picks the next step
 from `{pull_source, analyze_code, verify_telemetry, run_tot_dep_graph, resolve_bp_links,
@@ -407,14 +439,16 @@ If no candidate clears the threshold, the highest-scoring graph is kept and flag
 
 #### 9.3.1 Responsibilities
 
-The B&P agent owns the **BP pages** in GitHub, the **BP doc index** (per-page metadata,
-last-known input-doc hashes), and the **BP sources inventory**. It ingests org input docs, hands
-them to the RAG Service for indexing, generates product/feature pages with cross-references to SD,
-and answers query-time questions about products. Every page it produces or consumes needs to
-**resolve into the SD documentation** so a B&P page about a product links to the services that
-implement it. It does *not* embed or chunk anything itself, write into SD pages, or read source
-code directly — retrieval and indexing go through `RAG_MCP`, and SD pages are reached via
-`SD_MCP`.
+The B&P agent owns the **BP pages** in GitHub, the **BP doc index** (per-page metadata, including
+the page's content hash, an SD-side `side_info_revision` snapshot, and any `answered_sme_blocks`
+preserved from prior refreshes), and the **BP sources inventory** (in the enrich-existing flow,
+this tracks the BP page hashes themselves rather than separate input docs). It iterates over
+the existing BP pages, fills detected gaps using SD context (via `SD_MCP`) and RAG retrieval,
+escalates unresolvable gaps as `SME-PLACEHOLDER` blocks, and discovers new pages from SD's
+`referenced_products`. Every page it produces or updates needs to **resolve into the SD
+documentation** so a B&P page about a product links to the services that implement it. It does
+*not* embed or chunk anything itself, write into SD pages, or read source code directly —
+retrieval and indexing go through `RAG_MCP`, and SD pages are reached via `SD_MCP`.
 
 #### 9.3.2 APIs (MCP)
 
@@ -424,17 +458,21 @@ Methods exposed by `BP_MCP`:
   query-mode entry point. The Orchestrator calls this with the user's question; B&P delegates to
   `RAG_MCP.retrieve` with `domain_filter=bp`/`both`, runs `resolve_sd_links` on referenced
   services in the response, and returns the composed answer with inline cross-reference links.
-- `dispatch_refresh(event) -> { affected_pages, escalations }` — background-mode entry point. The
-  Orchestrator calls this with `(doc_id, change_kind)`. B&P diffs against its `sources_inventory`,
-  runs its background-mode pipeline (ingest → `RAG_MCP.index(domain=bp, ...)` → `resolve_sd_links`
-  → `write_doc`), and returns the list of pages plus any escalation envelopes.
+- `dispatch_refresh(event) -> { affected_pages, escalations }` — background-mode entry point.
+  The Orchestrator calls this with `(page_uri or empty, change_kind, force)`. B&P iterates over
+  every existing BP page (the `documentation/bp/` tree), runs the enrichment pipeline per page
+  (gap-detect → fill → merge → re-index), and discovers new pages from SD's `referenced_products`.
+  Returns the list of affected pages plus any escalation envelopes. `force=true` bypasses the
+  per-page skip-unchanged check.
 - `find_products_for_service(service_id) -> [{ product, feature, role }]` — relational
   cross-reference, called by SD during `resolve_bp_links`. Reads from B&P's `doc_index` only.
 - `get_page(page_uri) -> { content, doc_index_entry }` — read a B&P page's current content and
   metadata.
 - `patch_page(page_uri, question_id, replacement) -> { commit_sha }` — replace the fenced
-  `SME-PLACEHOLDER:question_id` block with the resolved text plus link. Same semantics as SD's
-  `patch_page`. Updates `open_placeholders` in the B&P `doc_index` and triggers `RAG_MCP.index`.
+  `SME-PLACEHOLDER:question_id` block with the resolved text wrapped in a `SME-ANSWERED:question_id`
+  fence. The wrapping is what lets the next refresh detect and preserve the answered prose
+  verbatim instead of overwriting it. Updates `open_placeholders` and `answered_sme_blocks` in
+  the B&P `doc_index` and triggers `RAG_MCP.index`.
 - `ingest_sme_doc(question_id, sme_text, originating_pages) -> { new_page_uri, embedding_revision }` —
   turn an SME reply into a new B&P page. Called only by the Orchestrator's `ingest_sme_reply`.
   Writes the new page to GitHub, calls `RAG_MCP.index(domain=bp, ...)`, and returns the new page's
@@ -444,19 +482,30 @@ Methods exposed by `BP_MCP`:
 
 The B&P agent is one LangGraph state graph.
 
-*Background mode* — the agent ingests input documents (org docs from the Git repo for the POC),
-normalizes them (strips formatting metadata, collapses whitespace, resolves embedded references),
-and computes a content hash that B&P's own `sources_inventory` uses to skip unchanged files on the
-next refresh. It then hands the normalized document to the RAG Service via
-`RAG_MCP.index(domain=bp, source_uri, document, content_hash)` — the RAG Service runs ToT chunking
-([Section 9.1.3.2](#9132-tot-chunking-strategy)), computes embeddings, and persists the chunks. B&P
-records the returned `chunking_strategy` and `embedding_revision` in its `doc_index` and produces
-the corresponding B&P page. Right before writing the page, a `resolve_sd_links` node calls the
-**SD MCP** to enumerate the services that back the product or feature described on the page; the
-resulting links are inlined as relative Markdown links to the SD pages. Stale links surface as
-follow-up tasks rather than silent rot — the next refresh re-validates them. For the POC the input
-set is just hand-checked org docs in the same Git repo; later phases plug in additional MCPs
-(Confluence, Slack, etc.) without changing this contract.
+*Background mode (enrich-existing)* — the agent walks `documentation/bp/` for the set of pages it
+already maintains. For each page, it reads the current content, asks an LLM judge to score
+structural completeness against a fixed rubric (Overview / Use Cases / Capabilities /
+Integrations / Open Questions), and produces a list of `Gap` objects naming the missing or
+non-substantive sections. Each gap drives a focused `RAG_MCP.retrieve(domain_filter=both)` query
+plus a side-info call into `SD_MCP` for services the gap references; gaps that come back
+`status=ok` are merged into the existing page in place (`compose.merge_into_existing`), gaps that
+come back `low_confidence` / `exhausted` get rendered as `SME-PLACEHOLDER` blocks (§9.5). The
+merged page is hashed and re-indexed via `RAG_MCP.index(domain=bp, source_uri=page_uri,
+document, content_hash)`; the agent records the returned `chunking_strategy`,
+`embedding_revision`, and a fresh `side_info_revision` (a hash summary of the SD doc-index used
+during this enrichment) in its `doc_index`. SME-answered prose carried forward from prior
+refreshes is detected via `SME-ANSWERED:question_id` fences and preserved verbatim, so a re-run
+never overwrites human-authored answers.
+
+After every existing page is enriched, a *new-page discovery* pass scans SD's doc-index for
+`referenced_products` whose slug isn't yet in the B&P `doc_index`. Each missing product gets a
+minimal stub page written under `documentation/bp/`; the next refresh picks it up and runs the
+full enrichment pass against the skeleton.
+
+*Skip-unchanged* — the inventory check now keys on the BP page's own content hash plus the
+`side_info_revision`. A page is skipped only when both match the prior refresh; if SD's doc-index
+state changed (new services, new product references) the BP page re-enriches even though its own
+bytes didn't change. `force=true` bypasses both checks.
 
 *Query mode* — incoming questions are answered by delegating to the RAG Service via
 `RAG_MCP.retrieve(query, domain_filter=bp, mode=query)` ([Section 9.1.3.1](#9131-autonomous-rag-loop)).
@@ -468,6 +517,12 @@ up-to-date link even if the persisted page is briefly stale. If the response com
 `low_confidence` or `exhausted`, the user gets a low-confidence answer with closest-match
 citations — query mode does not escalate to an SME (see
 [Section 9.5](#95-sme-interaction-module-6)).
+
+*Telemetry* — every `_refresh_one` invocation emits a `bp_service.enrich_page` OTel span tagged
+with `gap_count`, `filled_count`, `escalated_count`, and `is_substantive` attributes. The span
+status takes one of `enriched` / `escalated_only` / `unchanged` / `stub_created` / `page_deleted` /
+`error`; the Dashboard surfaces these under "pages enriched / unchanged / escalated-only / new
+pages stubbed" KPIs and rolls them into the dispatch-outcomes panel.
 
 The cross-referencing direction is symmetric with SD: B&P calls **SD MCP** to resolve "what
 services serve this product"; SD calls **B&P MCP** to resolve "what products depend on this
@@ -540,7 +595,7 @@ REST endpoints (versioned under `/v1`):
   `{ status, started_at, completed_at, result }`.
 - `GET /v1/health` — liveness check for the Update Trigger and any external monitoring.
 
-Two additional endpoints colocated under `/v1/` are added by [§9.8 Documentation Portal](#98-documentation-portal) for its Agent X-Ray drawer and Dashboard tab:
+Two additional endpoints colocated under `/v1/` are added by [§9.8 Documentation Portal](#98-documentation-portal) for its Multi-Agents X-Ray drawer and Dashboard tab:
 
 - `GET /v1/streams/events?since_service_id=...&since_llm_id=...&module_prefix=...` — server-sent
   events; merged tail of both the `service_logs` and `llm_calls` tables at `$AUDIT_DB_PATH`. Each
@@ -879,7 +934,7 @@ that routes queries to the Orchestrator, the SME answer UI, and rendered views o
 pages the agent maintains. For the POC the rendered-views surface dominates — it's how
 leadership / developers / product see what the agent has produced — so the portal ships first
 as a thin viewer of the docs repo with three operator-facing surfaces (SME Answers, Dashboard,
-and an Agent X-Ray drawer) layered on top.
+and a Multi-Agents X-Ray drawer) layered on top.
 
 #### 9.8.1 Stack and shape
 
@@ -914,7 +969,7 @@ tab bar, and a collapsible right-side drawer on top:
     breakdowns: per-(service, method) span counts, p50/p95 latency, status histograms, RAG
     retrieve status distribution, and dispatch-outcome status histograms (escalation signal).
     Polled on a short interval — charts re-render in place.
-  * **Agent X-Ray** *(right-side collapsible drawer, not a tab)* — toggled from a header
+  * **Multi-Agents X-Ray** *(right-side collapsible drawer, not a tab)* — toggled from a header
     button. Subscribes to `GET /v1/streams/events`, the merged SSE feed of service-log
     entries ([§9.6](#96-audit-and-observability-module-6) "service log") and LLM call records
     ([§9.6](#96-audit-and-observability-module-6) "LLM call audit") — one combined console
@@ -934,7 +989,7 @@ with the cited sources listed beneath; failures surface inline as a red error me
 A selector in the header (one level above the tabs, so it applies to whichever tab is active)
 exposes the canonical branches (`main`, `starting-point`) plus a free-text "custom branch"
 that accepts any ref name. The selected branch lives in a single piece of cross-tab UI state;
-the Documentation tab watches it and re-fetches on change. Agent X-Ray, Dashboard, and SME
+the Documentation tab watches it and re-fetches on change. Multi-Agents X-Ray, Dashboard, and SME
 Answers ignore the branch since they read live runtime state, not git state.
 
 The selector is the operator's escape hatch: when an agent run goes wrong, they reset the
@@ -944,7 +999,7 @@ next refresh.
 
 #### 9.8.4 SSE event streaming
 
-The Agent X-Ray drawer subscribes to a single merged SSE feed
+The Multi-Agents X-Ray drawer subscribes to a single merged SSE feed
 (`GET /v1/streams/events` — see [§9.4.2](#942-apis-rest)) backed by a poll-and-emit cursor
 against both audit-DB tables. Per poll cycle the orchestrator queries `service_logs` and
 `llm_calls` for rows newer than each table's cursor, merges by timestamp, and emits each row

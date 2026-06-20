@@ -31,7 +31,7 @@ class RAGHttpClient:
     passes explicitly anyway).
     """
 
-    def __init__(self, url: str, *, timeout_s: float = 180.0):
+    def __init__(self, url: str, *, timeout_s: float = 7200.0):
         self._mcp = MCPHttpClient(url, name="rag", timeout_s=timeout_s)
 
     def index(
@@ -80,7 +80,7 @@ class BPHttpClient:
     (just ``find_products_for_service`` + ``get_page``).
     """
 
-    def __init__(self, url: str, *, timeout_s: float = 180.0):
+    def __init__(self, url: str, *, timeout_s: float = 7200.0):
         self._mcp = MCPHttpClient(url, name="bp", timeout_s=timeout_s)
 
     def dispatch_query(
@@ -137,7 +137,7 @@ class SDHttpClient:
     doesn't own any input docs).
     """
 
-    def __init__(self, url: str, *, timeout_s: float = 180.0):
+    def __init__(self, url: str, *, timeout_s: float = 7200.0):
         self._mcp = MCPHttpClient(url, name="sd", timeout_s=timeout_s)
 
     def dispatch_query(
@@ -162,6 +162,10 @@ class SDHttpClient:
 
     def get_page(self, page_uri: str) -> dict[str, Any]:
         return self._mcp.call("get_page", {"page_uri": page_uri}) or {}
+
+    def list_pages(self) -> list[dict[str, Any]]:
+        out = self._mcp.call("list_pages", {})
+        return out if isinstance(out, list) else []
 
     def patch_page(self, *, page_uri: str, question_id: str, replacement: str) -> dict[str, Any]:
         return self._mcp.call("patch_page", {

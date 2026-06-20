@@ -23,9 +23,9 @@ defineProps({
 
 <style lang="scss" scoped>
 .pending-card {
-  background: #1c1f33;
+  background: var(--theme-bg-panel);
   color: #888;
-  border-color: #2c2c3e;
+  border-color: var(--theme-bg-code);
   border-style: dashed;
   padding: 12px 14px;
   height: 100%;

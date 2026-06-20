@@ -97,6 +97,75 @@ def replace_placeholder_block(content: str, *, question_id: str, replacement: st
 
 
 # ---------------------------------------------------------------------------
+# §9.2 enrichment — merge filled gap-sections into an existing page
+# ---------------------------------------------------------------------------
+
+def merge_into_existing(
+    *,
+    existing_content: str,
+    sections: list[tuple[str, str]],
+    open_questions_anchor: str = "Open Questions",
+) -> str:
+    """Merge a list of ``(section_title, section_md)`` blocks into an
+    existing Markdown page.
+
+    For each entry:
+      * If a top-level heading (``## <section_title>``) is already
+        present, the body up to the next ``## ``-level heading (or
+        end-of-document) is replaced with the new ``section_md``.
+      * Otherwise the new section is appended **before** the
+        ``Open Questions`` section if one exists, else at the end.
+
+    Symmetric with the BP-side helper of the same name.
+    """
+    out = existing_content if existing_content.endswith("\n") else existing_content + "\n"
+    for title, section_md in sections:
+        body = _strip_leading_heading(section_md, title).strip()
+        canonical = f"## {title}\n\n{body}\n"
+        out = _replace_or_insert_section(
+            out,
+            heading=title,
+            canonical=canonical,
+            anchor_before=open_questions_anchor,
+        )
+    return out
+
+
+def _strip_leading_heading(md: str, expected_title: str) -> str:
+    pat = re.compile(
+        rf"^\s*##\s+{re.escape(expected_title)}\s*\n+",
+        re.IGNORECASE,
+    )
+    return pat.sub("", md, count=1)
+
+
+def _replace_or_insert_section(
+    page: str,
+    *,
+    heading: str,
+    canonical: str,
+    anchor_before: str,
+) -> str:
+    """Replace an existing ``## heading`` block or insert a new one."""
+    pattern = re.compile(
+        rf"(^|\n)##\s+{re.escape(heading)}\s*\n.*?(?=\n##\s+|\Z)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    if pattern.search(page):
+        return pattern.sub(lambda m: m.group(1) + canonical.rstrip(), page, count=1)
+    anchor_re = re.compile(
+        rf"(^|\n)##\s+{re.escape(anchor_before)}\s*\n",
+        re.IGNORECASE,
+    )
+    m = anchor_re.search(page)
+    if m:
+        idx = m.start() + len(m.group(1))
+        return page[:idx] + canonical + "\n" + page[idx:]
+    sep = "" if page.endswith("\n\n") else ("\n" if page.endswith("\n") else "\n\n")
+    return page + sep + canonical
+
+
+# ---------------------------------------------------------------------------
 # Page render
 # ---------------------------------------------------------------------------
 

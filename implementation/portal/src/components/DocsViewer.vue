@@ -199,7 +199,28 @@ mermaid.initialize({
   startOnLoad: false,
   securityLevel: "loose",
   theme: "base",
-  themeVariables: {
+  // Mermaid validates colour values up-front and rejects `var(...)`,
+  // so we keep literal hex here. Default seed = orange palette (the
+  // shipped default theme); the settings-store watcher below pushes
+  // the green palette when the operator toggles.
+  themeVariables: _mermaidThemeVars(settings.theme || "orange"),
+});
+
+// Per-theme literal palette for mermaid (it doesn't honour CSS vars).
+function _mermaidThemeVars(theme) {
+  if (theme === "green") {
+    return {
+      background: "#050a05",
+      primaryColor: "#0a1108",
+      primaryTextColor: "#3fbf3f",
+      primaryBorderColor: "#2fbf5f",
+      lineColor: "#5cbf5c",
+      secondaryColor: "#0d1d0d",
+      tertiaryColor: "#000200",
+      fontFamily: "'JetBrains Mono', monospace",
+    };
+  }
+  return {
     background: "#1a1a2e",
     primaryColor: "#1c1f33",
     primaryTextColor: "#f5e6d3",
@@ -208,8 +229,8 @@ mermaid.initialize({
     secondaryColor: "#2c2c3e",
     tertiaryColor: "#11121f",
     fontFamily: "'JetBrains Mono', monospace",
-  },
-});
+  };
+}
 
 // Custom marked renderer: ```mermaid blocks become a <pre class="mermaid">
 // element that mermaid.run() can pick up after the HTML lands in the DOM.
@@ -425,6 +446,27 @@ watch(
     reload();
   },
 );
+
+// Theme flip: re-init mermaid with the matching literal palette and
+// re-render any currently-visible diagrams so the existing SVGs flip
+// too. Mermaid stores rendered SVGs keyed by id; resetting via
+// `mermaid.initialize()` and re-running the merge sweep is enough.
+watch(
+  () => settings.theme,
+  async (theme) => {
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "loose",
+      theme: "base",
+      themeVariables: _mermaidThemeVars(theme),
+    });
+    if (selectedPath.value && renderedHtml.value) {
+      // Re-render the current file so the diagrams pick up the new
+      // palette — cheaper than a full reload.
+      await loadFile(selectedPath.value);
+    }
+  },
+);
 </script>
 
 <style lang="scss" scoped>
@@ -432,11 +474,11 @@ watch(
   height: calc(100vh - 200px);
 }
 .docs-tree {
-  background: #1c1f33;
-  color: #f5e6d3;
+  background: var(--theme-bg-panel);
+  color: var(--theme-text-primary);
 }
 .dir-list {
-  background: #1c1f33;
+  background: var(--theme-bg-panel);
 }
 .up-item {
   background: rgba(255, 214, 0, 0.06);
@@ -446,7 +488,7 @@ watch(
   font-size: 0.85rem;
 }
 .path-label :deep(.q-breadcrumbs__el) {
-  color: #f5e6d3;
+  color: var(--theme-text-primary);
 }
 .branch-chip {
   font-family: "JetBrains Mono", monospace;
@@ -459,9 +501,9 @@ watch(
   font-family: "JetBrains Mono", monospace;
   font-size: 0.95rem;
   line-height: 1.55;
-  color: #f5e6d3;
-  background: #1a1a2e;
-  border-left: 4px solid #ff6b35;
+  color: var(--theme-text-primary);
+  background: var(--theme-bg-page);
+  border-left: 4px solid var(--theme-accent-primary);
   min-height: 100%;
 }
 // Tighter heading sizes — the Press Start 2P pixel font + browser
@@ -474,7 +516,7 @@ watch(
 .markdown-body :deep(h5),
 .markdown-body :deep(h6) {
   font-family: "VT323", "JetBrains Mono", monospace;
-  color: #ff6b35;
+  color: var(--theme-accent-primary);
   letter-spacing: 0.04em;
   line-height: 1.4;
   margin: 1.4rem 0 0.6rem;
@@ -484,24 +526,24 @@ watch(
 .markdown-body :deep(h3) { font-size: 1.1rem; }
 .markdown-body :deep(h4) { font-size: 1.05rem; }
 .markdown-body :deep(h5),
-.markdown-body :deep(h6) { font-size: 1rem; color: #ffd600; }
+.markdown-body :deep(h6) { font-size: 1rem; color: var(--theme-accent-secondary); }
 .markdown-body :deep(a) {
-  color: #ffd600;
+  color: var(--theme-accent-secondary);
 }
 .markdown-body :deep(code) {
-  background: #2c2c3e;
+  background: var(--theme-bg-code);
   padding: 1px 4px;
   border-radius: 2px;
   font-size: 0.85em;
 }
 .markdown-body :deep(pre) {
-  background: #11121f;
+  background: var(--theme-bg-deeper);
   padding: 0.75rem 1rem;
   overflow-x: auto;
-  border-left: 3px solid #00acc1;
+  border-left: 3px solid var(--theme-accent-info);
 }
 .markdown-body :deep(blockquote) {
-  border-left: 3px solid #ffd600;
+  border-left: 3px solid var(--theme-accent-secondary);
   padding-left: 1rem;
   color: #cfc7b0;
 }
@@ -517,8 +559,8 @@ watch(
 // scale to the available width without bleeding past the column.
 .markdown-body :deep(pre.mermaid),
 .markdown-body :deep(.mermaid-rendered) {
-  background: #11121f;
-  border-left: 3px solid #ff6b35;
+  background: var(--theme-bg-deeper);
+  border-left: 3px solid var(--theme-accent-primary);
   padding: 0.75rem;
   text-align: center;
   overflow-x: auto;

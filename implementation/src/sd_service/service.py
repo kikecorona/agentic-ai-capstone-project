@@ -34,15 +34,25 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.bp_service.pages import PageStore
+from src.shared.llm import get_chat_llm
 from src.shared.otel_client import OTelClient
-from src.shared.service_log import get_logger
+from src.shared.service_log import format_exception, get_logger
 
 from .analyze_code import ServiceAnalysis, analyze_service
 from .clients import BPClient, RAGClient
 from .compose import (
     PageEscalation,
     compose_page,
+    merge_into_existing,
     replace_placeholder_block,
+)
+from .enrich import (
+    SD_REQUIRED_SECTIONS,
+    detect_gaps,
+    extract_answered_sme_blocks,
+    fill_gap,
+    side_info_revision,
+    wrap_sme_answer,
 )
 from .sources import SourceStore
 from .store import (
@@ -245,24 +255,45 @@ class SDService:
     # ------------------------------------------------------- dispatch_refresh
 
     def dispatch_refresh(self, *, event: dict[str, Any]) -> dict[str, Any]:
-        """Background-mode entry (§9.2.2)."""
+        """Background-mode entry (§9.2.2 — enrich-existing flow).
+
+        Iterates the **union** of:
+          1. Existing SD pages under the page store (``documentation/sd/``)
+             — each is read, gap-detected, filled from RAG with the
+             service's freshly-pulled source-code analysis as side-info,
+             and merged back in place.
+          2. Services in ``SD_SOURCES_GH_PATH`` whose subdirectory has
+             *no* SD page yet — composed from scratch via the original
+             "analyze → compose" path so newly-added services pick up a
+             starter page on the next refresh.
+
+        ``doc_id_or_commit_sha``:
+          * empty → enrich every existing page + discover new services.
+          * non-empty → either a page URI (``sd/services/foo.md``) or a
+            service name (``foo``) — only that one is processed.
+          * ``force=True`` bypasses skip-unchanged checks.
+        """
         change_kind = (event or {}).get("change_kind", "modified")
         single = (event or {}).get("doc_id_or_commit_sha") or ""
-        # Operator override — bypass `sources_inventory.is_unchanged()`
-        # so a manual refresh from the portal can re-run the pipeline
-        # against a fully-indexed corpus. See orchestrator
-        # ``RefreshRequest.force``.
         force = bool((event or {}).get("force"))
 
         if single:
-            services = [_service_from_event(single)]
-            services = [s for s in services if s]
+            single_clean = single.strip()
+            if single_clean.startswith(self._page_prefix) or single_clean.endswith(".md"):
+                pages = [single_clean]
+                services = []
+            else:
+                # Treat as a service name → resolve to its page_uri.
+                pages = [self._page_uri_for(_service_from_event(single_clean) or single_clean)]
+                services = []
         else:
+            pages = self._pages.list_pages()
             services = self._sources.list_services()
 
         log.info(
             f"dispatch_refresh start change_kind={change_kind} "
-            f"services={len(services)} single={single!r} force={force}"
+            f"pages={len(pages)} services={len(services)} "
+            f"single={single!r} force={force}"
         )
 
         with self._otel.span(
@@ -270,16 +301,55 @@ class SDService:
             mcp_method="dispatch_refresh",
         ) as span:
             span.set_attribute("change_kind", change_kind)
+            span.set_attribute("page_count", len(pages))
             span.set_attribute("service_count", len(services))
             span.set_attribute("force", force)
             outcomes: list[RefreshOutcome] = []
+            covered_services: set[str] = set()
+
+            # 1) Enrich every existing SD page.
+            for page_uri in pages:
+                try:
+                    outcome = self._refresh_one_page(
+                        page_uri=page_uri,
+                        change_kind=change_kind,
+                        force=force,
+                    )
+                    if outcome.service:
+                        covered_services.add(outcome.service)
+                    outcomes.append(outcome)
+                except Exception as exc:  # noqa: BLE001 — per-page isolation
+                    details = format_exception(exc)
+                    log.error(f"dispatch_refresh: page {page_uri} failed: {details}")
+                    outcomes.append(RefreshOutcome(
+                        page_uri=page_uri,
+                        service=None,
+                        chunks_indexed=0,
+                        chunking_strategy=None,
+                        embedding_revision=None,
+                        downstream_services=[],
+                        referenced_products=[],
+                        open_placeholders=[],
+                        escalations=[{"error": details}],
+                        skipped=True,
+                        skip_reason="refresh_error",
+                    ))
+
+            # 2) New-service discovery — services with no SD page yet.
             for svc in services:
+                if svc in covered_services:
+                    continue
+                if self._doc_index.get_by_service(svc) is not None and not force:
+                    continue
                 try:
                     outcomes.append(
-                        self._refresh_one(service=svc, change_kind=change_kind, force=force)
+                        self._refresh_one_service(
+                            service=svc, change_kind=change_kind, force=force,
+                        )
                     )
                 except Exception as exc:  # noqa: BLE001 — per-service isolation
-                    log.error(f"dispatch_refresh: {svc} failed: {exc}")
+                    details = format_exception(exc)
+                    log.error(f"dispatch_refresh: service {svc} failed: {details}")
                     outcomes.append(RefreshOutcome(
                         page_uri=self._page_uri_for(svc),
                         service=svc,
@@ -289,7 +359,7 @@ class SDService:
                         downstream_services=[],
                         referenced_products=[],
                         open_placeholders=[],
-                        escalations=[{"error": f"{type(exc).__name__}: {exc}"}],
+                        escalations=[{"error": details}],
                         skipped=True,
                         skip_reason="refresh_error",
                     ))
@@ -298,6 +368,7 @@ class SDService:
             escalations = [e for o in outcomes for e in o.escalations]
             span.set_status("ok")
             span.set_payload_summary({
+                "pages_seen": len(pages),
                 "services_seen": len(services),
                 "affected_pages": len(affected_pages),
                 "escalations": len(escalations),
@@ -327,19 +398,276 @@ class SDService:
                 ],
             }
 
-    def _refresh_one(self, *, service: str, change_kind: str, force: bool = False) -> RefreshOutcome:
+    # ----------------------------------- _refresh_one_page (enrich existing)
+
+    def _refresh_one_page(
+        self, *, page_uri: str, change_kind: str, force: bool = False
+    ) -> RefreshOutcome:
+        """Read existing SD page → detect gaps via LLM → fill via RAG
+        with source-code analysis as side-info → merge back → re-index.
+
+        Wrapped in an OTel ``enrich_page`` span tagged with
+        ``gap_count`` / ``filled_count`` / ``escalated_count`` and
+        status ``enriched`` / ``escalated_only`` / ``unchanged`` /
+        ``page_deleted`` so the Dashboard can surface per-page outcomes.
+        """
+        with self._otel.span(
+            service=SERVICE_NAME,
+            mcp_method="enrich_page",
+        ) as span:
+            span.set_attribute("page_uri", page_uri)
+            span.set_attribute("force", force)
+
+            existing = self._pages.read_page(page_uri)
+            if existing is None:
+                log.warn(f"_refresh_one_page: {page_uri!r} not found; treating as deletion")
+                self._doc_index.delete(page_uri)
+                try:
+                    self._rag.delete(domain="sd", source_uri=page_uri)
+                except Exception as exc:  # noqa: BLE001
+                    log.error(f"_refresh_one_page: rag.delete({page_uri!r}) failed: {exc}")
+                span.set_status("page_deleted")
+                return RefreshOutcome(
+                    page_uri=page_uri,
+                    service=None,
+                    chunks_indexed=0,
+                    chunking_strategy=None,
+                    embedding_revision=None,
+                    downstream_services=[],
+                    referenced_products=[],
+                    open_placeholders=[],
+                    escalations=[],
+                    skipped=True,
+                    skip_reason="page_not_found",
+                )
+
+            prior = self._doc_index.get(page_uri)
+            page_hash = _hash_text(existing)
+            service_name = (
+                (prior.service if prior else None)
+                or _service_from_page_uri(page_uri, self._page_prefix)
+            )
+
+            # Pull fresh source-code analysis as side-info (best-effort —
+            # missing source code is non-fatal; the gap-fill loop will
+            # just lean on RAG without the contextual hints).
+            analysis_summary: dict[str, Any] = {}
+            analysis: ServiceAnalysis | None = None
+            if service_name:
+                try:
+                    analysis = analyze_service(
+                        service=service_name, store=self._sources, augment=True,
+                    )
+                    analysis_summary = {
+                        "service": service_name,
+                        "endpoints": [
+                            {"method": e.method, "path": e.path, "handler": getattr(e, "handler", None)}
+                            for e in (analysis.endpoints or [])[:24]
+                        ],
+                        "downstream_services": list((analysis.downstream_calls or [])[:24]),
+                        "source_revision": analysis.source_revision,
+                    }
+                except Exception as exc:  # noqa: BLE001
+                    log.warn(
+                        f"_refresh_one_page: analyze_service({service_name!r}) failed: {exc}"
+                    )
+
+            sd_revision = side_info_revision(analysis_summary)
+
+            # Skip-unchanged: page-content + side-info both unchanged.
+            if (
+                not force
+                and prior is not None
+                and prior.content_hash == page_hash
+                and (prior.side_info_revision or "") == sd_revision
+            ):
+                log.info(
+                    f"_refresh_one_page: {page_uri} unchanged (page+side-info); skipping"
+                )
+                span.set_status("unchanged")
+                span.set_attribute("gap_count", 0)
+                return RefreshOutcome(
+                    page_uri=page_uri,
+                    service=service_name,
+                    chunks_indexed=0,
+                    chunking_strategy=prior.chunking_strategy,
+                    embedding_revision=prior.embedding_revision,
+                    downstream_services=prior.downstream_services,
+                    referenced_products=prior.referenced_products,
+                    open_placeholders=prior.open_placeholders,
+                    escalations=[],
+                    skipped=True,
+                    skip_reason="unchanged",
+                )
+
+            title = _title_from_content(existing) or service_name or page_uri
+
+            # Preserve any SME-answered prose carried by the previous page
+            # body so re-enrichment doesn't overwrite human-authored answers.
+            answered_blocks = extract_answered_sme_blocks(existing)
+            if prior and prior.answered_sme_blocks:
+                for qid, info in prior.answered_sme_blocks.items():
+                    answered_blocks.setdefault(qid, info)
+
+            # Detect gaps via the LLM judge.
+            llm = self._get_chat_llm()
+            gap_plan = detect_gaps(existing, page_title=title, llm=llm)
+            log.info(
+                f"_refresh_one_page: {page_uri} → {len(gap_plan.gaps)} gap(s); "
+                f"answered={len(answered_blocks)} force={force}"
+            )
+            span.set_attribute("gap_count", len(gap_plan.gaps))
+            span.set_attribute("answered_block_count", len(answered_blocks))
+            span.set_attribute("is_substantive", gap_plan.is_substantive)
+
+            # Fill each gap with the analysis summary as side-info.
+            filled = []
+            escalations: list[PageEscalation] = []
+            for gap in gap_plan.gaps:
+                fg = fill_gap(
+                    gap,
+                    page_uri=page_uri,
+                    page_title=title,
+                    service=service_name,
+                    analysis_summary=analysis_summary,
+                    rag=self._rag,
+                    answered_sme_blocks=answered_blocks,
+                )
+                filled.append(fg)
+                if fg.is_sme_placeholder and fg.question_id:
+                    escalations.append(PageEscalation(
+                        question_id=fg.question_id,
+                        placeholder_id=fg.question_id,
+                        topic=gap.section_title,
+                        question=gap.fill_prompt,
+                        best_guess=None,
+                        page_uri=page_uri,
+                    ))
+
+            filled_substantive = sum(
+                1 for fg in filled if not fg.is_sme_placeholder
+            )
+            span.set_attribute("filled_count", filled_substantive)
+            span.set_attribute("escalated_count", len(escalations))
+
+            if filled:
+                sections = [(fg.gap.section_title, fg.section_md) for fg in filled]
+                new_content = merge_into_existing(
+                    existing_content=existing,
+                    sections=sections,
+                )
+            else:
+                new_content = existing
+
+            new_hash = _hash_text(new_content)
+            if new_hash == page_hash and not force:
+                log.info(f"_refresh_one_page: {page_uri} no enrichment changes; skipping write")
+                commit_sha = (prior.metadata.get("commit_sha") if prior else None) or ""
+            else:
+                commit_sha = self._pages.write_page(page_uri, new_content)
+                log.info(
+                    f"_refresh_one_page: wrote {page_uri} commit={commit_sha} "
+                    f"placeholders={len(escalations)}"
+                )
+
+            # Re-index in RAG.
+            rag_index_result: dict[str, Any] = {}
+            try:
+                rag_index_result = self._rag.index(
+                    domain="sd",
+                    source_uri=page_uri,
+                    document=new_content,
+                    content_hash=new_hash,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error(f"_refresh_one_page: rag.index({page_uri!r}) failed: {exc}")
+
+            chunks_indexed = int(rag_index_result.get("chunks_indexed", 0))
+            last_updated = time.time()
+
+            # Inventory now tracks the SD page hash itself.
+            if service_name:
+                self._inv.upsert(
+                    service_name,
+                    analysis.source_revision if analysis else (prior.source_revision if prior else "unknown"),
+                    file_count=len(analysis.files_seen) if analysis else 0,
+                )
+            open_placeholder_ids = [esc.question_id for esc in escalations]
+
+            # Compose-derived structural fields (endpoints, downstream
+            # services) come from the freshly-pulled analysis when we
+            # have one; otherwise carry over from the prior entry.
+            endpoints_payload = (
+                [
+                    {"method": e.method, "path": e.path, "handler": getattr(e, "handler", None)}
+                    for e in (analysis.endpoints or [])
+                ] if analysis else (prior.endpoints if prior else [])
+            )
+            downstream_payload = (
+                list(analysis.downstream_calls or []) if analysis
+                else (prior.downstream_services if prior else [])
+            )
+
+            self._doc_index.upsert(SDDocIndexEntry(
+                page_uri=page_uri,
+                service=service_name,
+                title=title,
+                last_updated=last_updated,
+                source_revision=analysis.source_revision if analysis else (prior.source_revision if prior else None),
+                content_hash=new_hash,
+                chunking_strategy=rag_index_result.get("chunking_strategy"),
+                embedding_revision=rag_index_result.get("embedding_revision"),
+                open_placeholders=open_placeholder_ids,
+                endpoints=endpoints_payload,
+                downstream_services=downstream_payload,
+                referenced_products=(prior.referenced_products if prior else []),
+                side_info_revision=sd_revision,
+                answered_sme_blocks=answered_blocks,
+                metadata={"commit_sha": commit_sha, "change_kind": change_kind},
+            ))
+
+            if filled_substantive > 0:
+                span.set_status("enriched")
+            elif escalations:
+                span.set_status("escalated_only")
+            else:
+                span.set_status("unchanged")
+
+            return RefreshOutcome(
+                page_uri=page_uri,
+                service=service_name,
+                chunks_indexed=chunks_indexed,
+                chunking_strategy=rag_index_result.get("chunking_strategy"),
+                embedding_revision=rag_index_result.get("embedding_revision"),
+                downstream_services=downstream_payload,
+                referenced_products=(prior.referenced_products if prior else []),
+                open_placeholders=open_placeholder_ids,
+                escalations=[esc.envelope() for esc in escalations],
+            )
+
+    # ------------------------ _refresh_one_service (new-page compose flow)
+
+    def _refresh_one_service(
+        self, *, service: str, change_kind: str, force: bool = False
+    ) -> RefreshOutcome:
+        """Compose a fresh SD page from the source-code analysis. Used
+        for services discovered in source code that don't yet have an
+        SD page; on subsequent refreshes the page goes through
+        :meth:`_refresh_one_page` like any other.
+
+        This is the original "analyze → ToT dep graph → compose"
+        pipeline preserved verbatim — we just no longer enter it for
+        services that *already* have a page."""
         page_uri = self._page_uri_for(service)
         analysis: ServiceAnalysis = analyze_service(
             service=service, store=self._sources, augment=True
         )
 
         # Skip unchanged services per §9.2.1 sources-inventory diff.
-        # `force=True` bypasses this so manual portal refreshes can
-        # re-run end-to-end on an already-indexed corpus.
         if not force and self._inv.is_unchanged(service, analysis.source_revision):
             existing = self._doc_index.get(page_uri)
             if existing is not None:
-                log.info(f"_refresh_one: {service} unchanged; skipping")
+                log.info(f"_refresh_one_service: {service} unchanged; skipping")
                 return RefreshOutcome(
                     page_uri=page_uri,
                     service=service,
@@ -355,7 +683,7 @@ class SDService:
                 )
 
         log.info(
-            f"_refresh_one: indexing {service} -> {page_uri} "
+            f"_refresh_one_service: composing fresh page for {service} -> {page_uri} "
             f"revision={analysis.source_revision} "
             f"endpoints={len(analysis.endpoints)} calls={len(analysis.downstream_calls)}"
         )
@@ -365,7 +693,7 @@ class SDService:
         try:
             related = self._bp.find_products_for_service(service)
         except Exception as exc:  # noqa: BLE001
-            log.error(f"_refresh_one: bp.find_products_for_service({service!r}) failed: {exc}")
+            log.error(f"_refresh_one_service: bp.find_products_for_service({service!r}) failed: {exc}")
             related = []
 
         last_updated = time.time()
@@ -380,7 +708,7 @@ class SDService:
 
         commit_sha = self._pages.write_page(page_uri, composed.content)
         log.info(
-            f"_refresh_one: wrote {page_uri} commit={commit_sha} "
+            f"_refresh_one_service: wrote {page_uri} commit={commit_sha} "
             f"deps={len(composed.downstream_services)} "
             f"placeholders={len(composed.open_placeholders)}"
         )
@@ -395,25 +723,41 @@ class SDService:
                 content_hash=analysis.source_revision,
             )
         except Exception as exc:  # noqa: BLE001
-            log.error(f"_refresh_one: rag.index({page_uri!r}) failed: {exc}")
+            log.error(f"_refresh_one_service: rag.index({page_uri!r}) failed: {exc}")
 
         chunks_indexed = int(rag_index_result.get("chunks_indexed", 0))
 
         self._inv.upsert(service, analysis.source_revision, file_count=len(analysis.files_seen))
+        # Compute side_info_revision from the same analysis summary
+        # _refresh_one_page would have used, so a subsequent enrich pass
+        # treats the page as fresh.
+        analysis_summary = {
+            "service": service,
+            "endpoints": [
+                {"method": e.method, "path": e.path, "handler": getattr(e, "handler", None)}
+                for e in (analysis.endpoints or [])[:24]
+            ],
+            "downstream_services": list((analysis.downstream_calls or [])[:24]),
+            "source_revision": analysis.source_revision,
+        }
+        sd_revision = side_info_revision(analysis_summary)
+
         self._doc_index.upsert(SDDocIndexEntry(
             page_uri=page_uri,
             service=service,
             title=service,
             last_updated=last_updated,
             source_revision=analysis.source_revision,
-            content_hash=analysis.source_revision,
+            content_hash=_hash_text(composed.content),
             chunking_strategy=rag_index_result.get("chunking_strategy"),
             embedding_revision=rag_index_result.get("embedding_revision"),
             open_placeholders=composed.open_placeholders,
             endpoints=composed.endpoints,
             downstream_services=composed.downstream_services,
             referenced_products=composed.referenced_products,
-            metadata={"commit_sha": commit_sha, "change_kind": change_kind},
+            side_info_revision=sd_revision,
+            answered_sme_blocks={},
+            metadata={"commit_sha": commit_sha, "change_kind": change_kind, "stub": True},
         ))
 
         return RefreshOutcome(
@@ -427,6 +771,18 @@ class SDService:
             open_placeholders=composed.open_placeholders,
             escalations=[esc.envelope() for esc in composed.escalations],
         )
+
+    def _get_chat_llm(self):
+        """Lazy LLM instance for enrichment. Cached on the service so
+        the rubric prompt fits the same warm Ollama context across
+        every page in a refresh batch."""
+        if not hasattr(self, "_chat_llm") or self._chat_llm is None:
+            self._chat_llm = get_chat_llm(
+                module="sd.enrich",
+                temperature=0.2,
+                json_mode=True,
+            )
+        return self._chat_llm
 
     # -------------------------------------------- find_services_for_product
 
@@ -467,6 +823,20 @@ class SDService:
 
     # ----------------------------------------------------------- get_page
 
+    def list_pages(self) -> list[dict[str, Any]]:
+        """Pure relational dump of the SD doc-index — used by BP's
+        enrich pipeline as side-info ("which products do SD pages
+        reference?") and by BP's new-page discovery to find products
+        without a BP page yet. No LLM, no RAG."""
+        with self._otel.span(
+            service=SERVICE_NAME,
+            mcp_method="list_pages",
+        ) as span:
+            entries = self._doc_index.list_all()
+            span.set_status("ok")
+            span.set_payload_summary({"count": len(entries)})
+            return [e.to_dict() for e in entries]
+
     def get_page(self, page_uri: str) -> dict[str, Any]:
         with self._otel.span(
             service=SERVICE_NAME,
@@ -500,10 +870,17 @@ class SDService:
                 span.set_status("not_found")
                 log.error(f"patch_page: {page_uri!r} does not exist")
                 raise FileNotFoundError(f"page not found: {page_uri}")
+            # Wrap the SME reply in matching SME-ANSWERED:<qid> fences so
+            # `extract_answered_sme_blocks` finds it on the next refresh
+            # and preserves the prose verbatim — without the fences the
+            # next enrichment pass would overwrite the answer.
+            wrapped_replacement = wrap_sme_answer(
+                question_id=question_id, prose=replacement,
+            )
             new_content, replaced = replace_placeholder_block(
                 content,
                 question_id=question_id,
-                replacement=replacement,
+                replacement=wrapped_replacement,
             )
             if not replaced:
                 span.set_status("not_found")
@@ -527,6 +904,14 @@ class SDService:
                     entry.embedding_revision = rag_res.get("embedding_revision") or entry.embedding_revision
                     entry.chunking_strategy = rag_res.get("chunking_strategy") or entry.chunking_strategy
                     entry.last_updated = time.time()
+                    # Persist the SME-answered prose so subsequent
+                    # refreshes can match it from `answered_sme_blocks`
+                    # even if the in-page fence detection misfires.
+                    entry.answered_sme_blocks = dict(entry.answered_sme_blocks or {})
+                    entry.answered_sme_blocks[question_id] = {
+                        "hash": _hash_text(replacement)[:12],
+                        "prose": replacement.strip(),
+                    }
                     self._doc_index.upsert(entry)
             except Exception as exc:  # noqa: BLE001
                 log.error(f"patch_page: rag.index({page_uri!r}) failed: {exc}")
@@ -554,6 +939,35 @@ class SDService:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _hash_text(text: str) -> str:
+    import hashlib
+    return hashlib.sha1((text or "").encode("utf-8")).hexdigest()
+
+
+_TITLE_RE = re.compile(r"^\s*#\s+(?P<title>.+?)\s*$", re.MULTILINE)
+
+
+def _title_from_content(content: str) -> str | None:
+    """Pull the first ``# Heading`` from a Markdown page if present."""
+    if not content:
+        return None
+    m = _TITLE_RE.search(content)
+    return m.group("title").strip() if m else None
+
+
+def _service_from_page_uri(page_uri: str, page_prefix: str) -> str | None:
+    """Reverse of ``SDService._page_uri_for``. Strips the ``page_prefix``
+    plus the ``.md`` extension to recover the service name. Returns
+    ``None`` if the URI doesn't match the expected layout (e.g. the page
+    was hand-authored without going through the agent's naming scheme)."""
+    pp = page_prefix.rstrip("/") + "/"
+    uri = page_uri.lstrip("/")
+    if not uri.startswith(pp) or not uri.endswith(".md"):
+        return None
+    stem = uri[len(pp):-len(".md")]
+    return stem.strip("/") or None
+
 
 def _service_from_event(token: str) -> str | None:
     """Map a refresh token to the service it belongs to.

@@ -283,7 +283,7 @@ fan out, queries answer back, and Auto-RAG self-corrects within bounds — but e
 design ends in either a confident answer, a low-confidence answer with closest matches, or a
 human-in-the-loop hand-off (SME escalation in background mode). We deliberately gate human
 attention to the cases where it adds the most value: gaps in source material that the agent
-genuinely cannot resolve from what it has, never user-facing latency. The tradeoff is that
+genuIdoinely cannot resolve from what it has, never user-facing latency. The tradeoff is that
 low-confidence answers sometimes reach users without an SME having signed off; we accept that
 because the alternative — making every uncertain query block on a human — would collapse the
 system's throughput and defeat the "continuously updated" goal from

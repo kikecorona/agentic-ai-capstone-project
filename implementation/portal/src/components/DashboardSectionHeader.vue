@@ -22,19 +22,19 @@ defineProps({
 .section-header {
   display: flex;
   align-items: center;
-  border-bottom: 2px solid #ff6b35;
+  border-bottom: 2px solid var(--theme-accent-primary);
   padding: 8px 4px;
   margin-top: 8px;
   margin-bottom: 12px;
 }
 .section-icon {
-  color: #ff6b35;
+  color: var(--theme-accent-primary);
 }
 .section-label {
   font-family: "VT323", "JetBrains Mono", monospace;
   font-size: 1.3rem;
   letter-spacing: 0.08em;
-  color: #ff6b35;
+  color: var(--theme-accent-primary);
   text-transform: uppercase;
 }
 .section-sub {

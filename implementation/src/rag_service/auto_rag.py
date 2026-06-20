@@ -203,11 +203,32 @@ def _rewrite_query(original: str, current: str, domain_filter: str | None, attem
     try:
         msg = llm.invoke([SystemMessage(content="You rewrite retrieval queries."), HumanMessage(content=prompt)])
         data = json.loads(msg.content)
-        out = (data.get("rewrite") or "").strip()
+        out = _coerce_rewrite(data.get("rewrite"))
         return out or current
     except Exception as exc:  # noqa: BLE001
         log.error(f"rewriter failed: {exc}")
         return current
+
+
+def _coerce_rewrite(value: Any) -> str:
+    """Tolerate LLMs that return ``{"rewrite": ...}`` with the value
+    nested as a dict / list / non-string. We unwrap the most common
+    shapes and fall back to an empty string when nothing usable is
+    found — the caller then keeps the current query unchanged.
+    """
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        # Common nested shapes: {"text": "..."}, {"query": "..."},
+        # {"rewrite": "..."}.
+        for key in ("text", "query", "rewrite", "value"):
+            inner = value.get(key)
+            if isinstance(inner, str):
+                return inner.strip()
+        return ""
+    if isinstance(value, list):
+        return _coerce_rewrite(value[0]) if value else ""
+    return ""
 
 
 def _generate_answer(query: str, chunks: list[StoredChunk]) -> str:

@@ -1,6 +1,6 @@
 // src/router/routes.js
 //
-// One layout, three tabs. The Agent X-Ray lives in a right-side
+// One layout, three tabs. The Multi-Agents X-Ray lives in a right-side
 // collapsible drawer instead of a tab — see MainLayout.vue. Default
 // route lands on Documentation.
 const routes = [

@@ -15,14 +15,14 @@
       class="chat-fab"
       @click="open = true"
     >
-      <q-tooltip class="bg-grey-9">Ask the agent</q-tooltip>
+      <q-tooltip class="bg-grey-9">Ask the agents</q-tooltip>
     </q-btn>
 
     <!-- Expanded panel -->
     <q-card v-else flat bordered class="chat-panel column no-wrap">
       <q-toolbar class="bg-primary text-white">
         <q-icon name="forum" class="q-mr-sm" />
-        <span class="retro-display">Ask the agent</span>
+        <span class="retro-display">Ask the agents</span>
         <q-space />
         <q-select
           v-model="domainHint"
@@ -40,11 +40,6 @@
         <div class="stream-pad">
           <div v-if="!messages.length" class="empty-hint">
             <p>Ask anything about the documented products or services.</p>
-            <p class="text-caption">
-              Routed through the orchestrator's <code>POST /v1/queries</code>;
-              answers come from the BP and/or SD specialists depending on the
-              <code>domain</code> hint.
-            </p>
           </div>
           <div
             v-for="m in messages"
@@ -200,10 +195,10 @@ function escapeHtml(s) {
   height: 540px;
   max-width: calc(100vw - 48px);
   max-height: calc(100vh - 96px);
-  background: #1a1a2e;
-  color: #f5e6d3;
+  background: var(--theme-bg-page);
+  color: var(--theme-text-primary);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
-  border-color: #ff6b35;
+  border-color: var(--theme-accent-primary);
 }
 .retro-display {
   font-family: "VT323", "JetBrains Mono", monospace;
@@ -216,7 +211,7 @@ function escapeHtml(s) {
   font-size: 0.8rem;
 }
 .chat-stream {
-  background: #0e0f1a;
+  background: var(--theme-bg-deep);
 }
 .stream-pad {
   padding: 10px 12px;
@@ -236,11 +231,11 @@ function escapeHtml(s) {
 }
 .msg-you {
   background: rgba(255, 107, 53, 0.12);
-  border-left: 3px solid #ff6b35;
+  border-left: 3px solid var(--theme-accent-primary);
 }
 .msg-agent {
   background: rgba(0, 172, 193, 0.1);
-  border-left: 3px solid #00acc1;
+  border-left: 3px solid var(--theme-accent-info);
 }
 .msg-error {
   background: rgba(255, 82, 82, 0.12);
@@ -260,21 +255,21 @@ function escapeHtml(s) {
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #ffd600;
+  color: var(--theme-accent-secondary);
   margin-bottom: 4px;
 }
 .msg-role {
   font-weight: 600;
 }
 .msg-status {
-  color: #00acc1;
+  color: var(--theme-accent-info);
 }
 .msg-body :deep(h1),
 .msg-body :deep(h2),
 .msg-body :deep(h3) {
   font-size: 1.4rem;
   margin: 0.4rem 0 0.2rem;
-  color: #ff6b35;
+  color: var(--theme-accent-primary);
   font-family: "VT323", "JetBrains Mono", monospace;
   letter-spacing: 0.03em;
 }
@@ -282,16 +277,16 @@ function escapeHtml(s) {
   margin: 0.3rem 0;
 }
 .msg-body :deep(code) {
-  background: #2c2c3e;
+  background: var(--theme-bg-code);
   padding: 1px 4px;
   border-radius: 2px;
 }
 .msg-body :deep(a) {
-  color: #ffd600;
+  color: var(--theme-accent-secondary);
 }
 .msg-sources {
   margin-top: 6px;
-  border-top: 1px dashed #2c2c3e;
+  border-top: 1px dashed var(--theme-bg-code);
   padding-top: 4px;
 }
 .sources-label {
@@ -314,7 +309,7 @@ function escapeHtml(s) {
   gap: 6px;
   align-items: flex-end;
   padding: 8px;
-  background: #1c1f33;
-  border-top: 1px solid #2c2c3e;
+  background: var(--theme-bg-panel);
+  border-top: 1px solid var(--theme-bg-code);
 }
 </style>

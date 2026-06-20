@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.shared.otel_client import OTelClient
-from src.shared.service_log import get_logger
+from src.shared.service_log import format_exception, get_logger
 
 from .clients import BPClient, SDClient
 from .routing import (
@@ -236,21 +236,15 @@ class OrchestratorService:
                 escalations: list[dict[str, Any]] = []
                 details: list[dict[str, Any]] = []
 
-                if target.bp:
-                    with self._otel.span(
-                        service=SERVICE_NAME,
-                        mcp_method="dispatch_to_bp",
-                        mcp_domain="bp",
-                    ) as inner:
-                        bp_out = self._bp.dispatch_refresh(event=event)
-                        affected_pages.extend(bp_out.get("affected_pages") or [])
-                        escalations.extend(bp_out.get("escalations") or [])
-                        details.extend(_tag_details(bp_out.get("details") or [], "bp"))
-                        inner.set_status("ok")
-                        inner.set_payload_summary({
-                            "affected_pages": len(bp_out.get("affected_pages") or []),
-                            "escalations": len(bp_out.get("escalations") or []),
-                        })
+                # Order matters: SD runs FIRST so its `doc_index` (and
+                # therefore the `referenced_products` / endpoints used as
+                # BP's side-info) is fresh by the time BP enriches. BP's
+                # `_collect_sd_summary` and `resolve_sd_links` both call
+                # SD MCP, and a stale SD doc-index gives BP weaker
+                # cross-references and worse new-page discovery. The
+                # second leg waits on the first synchronously — we're
+                # already in a worker thread, so blocking here doesn't
+                # affect the orchestrator's REST surface.
                 if target.sd:
                     with self._otel.span(
                         service=SERVICE_NAME,
@@ -265,6 +259,21 @@ class OrchestratorService:
                         inner.set_payload_summary({
                             "affected_pages": len(sd_out.get("affected_pages") or []),
                             "escalations": len(sd_out.get("escalations") or []),
+                        })
+                if target.bp:
+                    with self._otel.span(
+                        service=SERVICE_NAME,
+                        mcp_method="dispatch_to_bp",
+                        mcp_domain="bp",
+                    ) as inner:
+                        bp_out = self._bp.dispatch_refresh(event=event)
+                        affected_pages.extend(bp_out.get("affected_pages") or [])
+                        escalations.extend(bp_out.get("escalations") or [])
+                        details.extend(_tag_details(bp_out.get("details") or [], "bp"))
+                        inner.set_status("ok")
+                        inner.set_payload_summary({
+                            "affected_pages": len(bp_out.get("affected_pages") or []),
+                            "escalations": len(bp_out.get("escalations") or []),
                         })
 
                 # Open / merge a queue entry for every escalation so the
@@ -321,11 +330,16 @@ class OrchestratorService:
                     f"affected_pages={len(affected_pages)} escalations={len(escalations)}"
                 )
         except Exception as exc:  # noqa: BLE001 — record + continue
-            log.error(f"handle_refresh task={task_id} failed: {exc}")
+            # Many exception types render to ``str(exc) == ""``; the
+            # shared helper always includes type + repr + traceback so
+            # operators see something useful in the X-Ray and the
+            # failed task row.
+            details = format_exception(exc)
+            log.error(f"handle_refresh task={task_id} failed: {details}")
             self._state.update_task(
                 task_id,
                 status="failed",
-                error=f"{type(exc).__name__}: {exc}",
+                error=details,
                 completed=True,
             )
 

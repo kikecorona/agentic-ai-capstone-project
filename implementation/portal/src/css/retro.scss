@@ -13,15 +13,15 @@
 //   #F5E6D3  cream              (body text)
 
 body {
-  background: #1a1a2e;
-  color: #f5e6d3;
+  background: var(--theme-bg-page);
+  color: var(--theme-text-primary);
   font-family: "JetBrains Mono", "Roboto Mono", monospace;
 }
 
 // Page surface inherits the dark background.
 .q-page {
-  background: #1a1a2e;
-  color: #f5e6d3;
+  background: var(--theme-bg-page);
+  color: var(--theme-text-primary);
 }
 
 // Display / heading font for retro emphasis.
@@ -34,12 +34,12 @@ body {
 .q-tab--active .q-tab__indicator,
 .q-tab--active.q-tab__indicator {
   height: 4px;
-  background: #00acc1;
+  background: var(--theme-accent-info);
 }
 
 // Card borders blend in with the dark surfaces.
 .q-card--bordered {
-  border-color: #2c2c3e;
+  border-color: var(--theme-bg-code);
 }
 
 // Chip squared by default — fits the retro vibe.

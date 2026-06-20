@@ -100,8 +100,8 @@ const maxLatency = computed(() =>
 
 <style lang="scss" scoped>
 .metrics-panel {
-  background: #1c1f33;
-  color: #f5e6d3;
+  background: var(--theme-bg-panel);
+  color: var(--theme-text-primary);
 }
 .panel-bar {
   font-family: "JetBrains Mono", monospace;
@@ -140,7 +140,7 @@ const maxLatency = computed(() =>
 .bar-track {
   position: relative;
   height: 14px;
-  background: #2c2c3e;
+  background: var(--theme-bg-code);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -149,34 +149,34 @@ const maxLatency = computed(() =>
   top: 0;
   bottom: 0;
   left: 0;
-  background: linear-gradient(90deg, #ff6b35, #ffd600);
+  background: linear-gradient(90deg, var(--theme-accent-primary), var(--theme-accent-secondary));
 }
 .bar-p50 {
-  background: #00acc1;
+  background: var(--theme-accent-info);
   z-index: 2;
 }
 .bar-p95 {
-  background: #ff6b35;
+  background: var(--theme-accent-primary);
   z-index: 1;
 }
 .bar-num {
   text-align: right;
-  color: #f5e6d3;
+  color: var(--theme-text-primary);
 }
 .num-p50 {
-  color: #00acc1;
+  color: var(--theme-accent-info);
 }
 .num-sep {
   color: #555;
   margin: 0 4px;
 }
 .num-p95 {
-  color: #ff6b35;
+  color: var(--theme-accent-primary);
 }
 .status-track {
   display: flex;
   height: 14px;
-  background: #2c2c3e;
+  background: var(--theme-bg-code);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -196,7 +196,7 @@ const maxLatency = computed(() =>
 }
 .status-low_confidence {
   background: #f9a825;
-  color: #1a1a2e;
+  color: var(--theme-bg-page);
 }
 .status-exhausted {
   background: #c62828;

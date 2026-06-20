@@ -176,6 +176,17 @@ def build_server(
 
     @mcp.tool(
         description=(
+            "Pure relational dump of the SD doc index — every page the SD "
+            "specialist currently maintains, with its referenced products / "
+            "downstream services / open placeholders. Used by BP's enrich "
+            "pipeline as side-info and by BP's new-page discovery."
+        ),
+    )
+    def list_pages() -> list[dict[str, Any]]:
+        return sd.list_pages()
+
+    @mcp.tool(
+        description=(
             "Replace a fenced SME-PLACEHOLDER:question_id block with the "
             "supplied replacement Markdown, write the page, and trigger "
             "RAG_MCP.index for the patched content."

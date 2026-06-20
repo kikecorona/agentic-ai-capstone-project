@@ -26,9 +26,9 @@ defineProps({
 
 <style lang="scss" scoped>
 .kpi-card {
-  background: #1c1f33;
-  color: #f5e6d3;
-  border-color: #2c2c3e;
+  background: var(--theme-bg-panel);
+  color: var(--theme-text-primary);
+  border-color: var(--theme-bg-code);
   padding: 12px 14px;
   height: 100%;
 }

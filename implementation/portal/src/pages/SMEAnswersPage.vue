@@ -263,9 +263,9 @@ onMounted(reload);
   font-family: "JetBrains Mono", monospace;
 }
 .trail {
-  background: #11121f;
+  background: var(--theme-bg-deeper);
   padding: 0.5rem 0.75rem;
-  border-left: 3px solid #00acc1;
+  border-left: 3px solid var(--theme-accent-info);
   font-family: "JetBrains Mono", monospace;
   font-size: 0.75rem;
   white-space: pre-wrap;
@@ -285,6 +285,6 @@ onMounted(reload);
   font-family: "JetBrains Mono", monospace;
 }
 .pending-list {
-  background: #1c1f33;
+  background: var(--theme-bg-panel);
 }
 </style>

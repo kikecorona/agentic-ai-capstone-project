@@ -116,7 +116,7 @@ def build_server(
         )
         page_store = GitHubPageStore(
             github=github,
-            inputs_prefix=env_url("BP_INPUTS_GH_PATH") or "documentation/bp-inputs",
+            inputs_prefix=env_url("BP_PAGES_GH_PATH") or "documentation/bp",
             pages_prefix=env_url("BP_PAGES_GH_PATH") or "documentation/bp",
         )
     else:

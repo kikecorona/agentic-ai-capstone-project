@@ -9,7 +9,7 @@ Three tabs and one collapsible drawer:
 | **Documentation**    | Live tree + Markdown render of `documentation/` from `kikecorona/pear-store` (covers `bp/`, `sd/`, and any other sibling) |
 | **SME Answers**      | Pending escalation queue + reply form (drives the orchestrator's `ingest_sme_reply`) |
 | **Dashboard**        | KPI tiles + per-(service, method) counts, p50/p95 latency, status histograms, RAG status mix, dispatch outcomes (§9.6 derived) |
-| **Agent X-Ray** *(right-side drawer, toggled from header)* | Console-style live tail of the merged service-log + LLM-call SSE feed (`GET /v1/streams/events`) |
+| **Multi-Agents X-Ray** *(right-side drawer, toggled from header)* | Console-style live tail of the merged service-log + LLM-call SSE feed (`GET /v1/streams/events`) |
 
 A floating chat bubble is mounted in the layout, available across every tab —
 posts to `POST /v1/queries` and renders the agent's Markdown answer with cited

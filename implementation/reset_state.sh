@@ -4,7 +4,10 @@
 #
 #   1. Embeddings store   — Chroma persistent dir at $RAG_CHROMA_PATH
 #   2. Audit logs         — $AUDIT_DB_PATH (LLM call + service log) and
-#                           $OTEL_DB_PATH (OTel spans)
+#                           $OTEL_DB_PATH (OTel spans), plus the per-
+#                           process tail logs at implementation/logs/*.log
+#                           (bp_mcp.log, sd_mcp.log, rag_mcp.log,
+#                           orchestrator.log, otel_mcp.log, portal.log).
 #   3. Per-service state  — BP doc index + sources inventory ($BP_DB_PATH),
 #                           SD doc index + sources inventory ($SD_DB_PATH),
 #                           Orchestrator queue + tasks ($OC_DB_PATH).
@@ -76,6 +79,7 @@ fi
 : "${BP_DB_PATH:=$SCRIPT_DIR/data/bp/state.db}"
 : "${SD_DB_PATH:=$SCRIPT_DIR/data/sd/state.db}"
 : "${OC_DB_PATH:=$SCRIPT_DIR/data/orchestrator/state.db}"
+: "${LOGS_DIR:=$SCRIPT_DIR/logs}"
 : "${PEARSTORE_REPO_PATH:=$SCRIPT_DIR/../../pear-store}"
 : "${PEARSTORE_RESET_TAG:=starting-point}"
 : "${PEARSTORE_REMOTE:=origin}"
@@ -95,7 +99,7 @@ _rm_sqlite() {
 # Confirmation prompt — destructive operations don't run silently by default.
 echo "==> reset_state.sh — about to:"
 [ "$DO_EMBEDDINGS" -eq 1 ] && echo "    [embeddings] rm -rf $RAG_CHROMA_PATH"
-[ "$DO_LOGS" -eq 1 ] && echo "    [logs] rm -f $AUDIT_DB_PATH (+journals) and $OTEL_DB_PATH (+journals)"
+[ "$DO_LOGS" -eq 1 ] && echo "    [logs] rm -f $AUDIT_DB_PATH (+journals), $OTEL_DB_PATH (+journals), and per-process tail logs in $LOGS_DIR/*.log"
 [ "$DO_STATE" -eq 1 ] && echo "    [state] rm -f $BP_DB_PATH, $SD_DB_PATH, $OC_DB_PATH (+journals)"
 [ "$DO_REPO" -eq 1 ] && echo "    [repo] force-reset $PEARSTORE_REPO_PATH to tag $PEARSTORE_RESET_TAG and 'git push --force-with-lease $PEARSTORE_REMOTE $PEARSTORE_BRANCH'"
 echo
@@ -130,6 +134,27 @@ if [ "$DO_LOGS" -eq 1 ]; then
   _rm_sqlite "audit" "$AUDIT_DB_PATH"
   _rm_sqlite "otel"  "$OTEL_DB_PATH"
   mkdir -p "$(dirname "$AUDIT_DB_PATH")" "$(dirname "$OTEL_DB_PATH")"
+
+  # Per-process tail logs at $LOGS_DIR/*.log — one file per service that
+  # `start_all.sh` launches in the background. Truncate rather than rm
+  # so a tail -F session that's open against the file keeps following
+  # the now-empty file instead of getting EOF'd.
+  if [ -d "$LOGS_DIR" ]; then
+    echo "==> [logs] truncating per-process tail logs in $LOGS_DIR"
+    shopt -s nullglob
+    log_files=("$LOGS_DIR"/*.log)
+    shopt -u nullglob
+    if [ ${#log_files[@]} -gt 0 ]; then
+      for f in "${log_files[@]}"; do
+        : > "$f"
+        echo "    truncated $f"
+      done
+    else
+      echo "    (no .log files in $LOGS_DIR)"
+    fi
+  else
+    echo "==> [logs] (no $LOGS_DIR directory — skipping tail-log truncate)"
+  fi
 fi
 
 # --------------------------------------------------------- 3. service state

@@ -83,7 +83,14 @@ class MCPHttpClient:
     closes the session and the next call re-opens it.
     """
 
-    def __init__(self, url: str, *, name: str = "peer", timeout_s: float = 60.0):
+    def __init__(self, url: str, *, name: str = "peer", timeout_s: float = 7200.0):
+        # Default 2 h — a single refresh fans out over every page in
+        # the repo, each running an LLM gap-detect + several RAG
+        # retrieves on the local Ollama. With llama3.1:8b on a
+        # workstation the worst-case for a multi-page enrich easily
+        # tops 30 min; we keep this generous so genuine refreshes
+        # don't wedge halfway. The orchestrator's task is async from
+        # the portal anyway (poll via /v1/tasks/{id}).
         self.url = url
         self.name = name
         self._timeout = timeout_s

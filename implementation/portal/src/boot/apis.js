@@ -12,27 +12,18 @@
 // internal `quasar.sass` to be processed by vite:css.
 import axios from "axios";
 import { createPinia } from "pinia";
-import { setCssVar } from "quasar";
+
+import { useSettingsStore } from "stores/settings.js";
 
 export default ({ app }) => {
-  // 80s retro orange palette — applied to Quasar's CSS custom properties
-  // before any component renders. Equivalent to overriding $primary etc.
-  // at compile time, but works against the precompiled CSS bundle.
-  setCssVar("primary", "#ff6b35");
-  setCssVar("secondary", "#ffd600");
-  setCssVar("accent", "#00acc1");
-  setCssVar("dark", "#1a1a2e");
-  setCssVar("dark-page", "#1a1a2e");
-  setCssVar("positive", "#2e7d32");
-  setCssVar("negative", "#ff5252");
-  setCssVar("info", "#00acc1");
-  setCssVar("warning", "#ffd600");
-
   // Orchestrator REST API. Default points at the locally-running
   // FastAPI service from start_all.sh; override via env or by editing
-  // .env in the portal directory.
+  // .env in the portal directory. Generous 2h timeout because the
+  // chat round-trip can chain through BP/SD → RAG with multiple
+  // auto-RAG rewrites; the backend MCP timeouts cap at the same
+  // value so the portal shouldn't give up first.
   const ocBase = import.meta.env.VITE_OC_BASE_URL || "http://127.0.0.1:8000";
-  const oc = axios.create({ baseURL: ocBase, timeout: 30000 });
+  const oc = axios.create({ baseURL: ocBase, timeout: 2 * 60 * 60 * 1000 });
 
   // GitHub REST API for the BP/SD doc fetchers. Anonymous access works
   // for public repos; production deployments would proxy this through
@@ -54,4 +45,10 @@ export default ({ app }) => {
   app.provide("ocBase", ocBase);
 
   app.use(createPinia());
+
+  // Apply the persisted theme on boot — picks up `localStorage["portal.theme"]`
+  // (default "orange") and pushes the matching palette into Quasar's
+  // setCssVar + sets `data-theme` on <html> so themes.scss kicks in.
+  // Has to run AFTER `app.use(createPinia())` so the store exists.
+  useSettingsStore().applyCurrentTheme();
 };

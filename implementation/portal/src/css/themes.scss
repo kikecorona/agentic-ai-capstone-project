@@ -1,0 +1,82 @@
+// src/css/themes.scss
+//
+// Theme palette as CSS custom properties so the whole portal can flip
+// between the default 80s-orange retro look and a phosphor-green
+// "old CRT monitor" look at runtime via a `data-theme` attribute on
+// `<html>`. Components reference `var(--theme-...)` from their scoped
+// styles; the Quasar palette (bg-primary etc.) is set in lockstep via
+// `setCssVar()` from the settings store so utility classes follow.
+//
+// Naming convention: every variable is prefixed `--theme-` so a
+// component author can grep usage and confidently know it'll swap.
+
+:root,
+:root[data-theme="orange"] {
+  // Surfaces — page → panel → deep → deeper, cool to warm contrast.
+  --theme-bg-page: #1a1a2e;
+  --theme-bg-panel: #1c1f33;
+  --theme-bg-toolbar: #1c1f33;
+  --theme-bg-deep: #0e0f1a;
+  --theme-bg-deeper: #11121f;
+  --theme-bg-code: #2c2c3e;
+
+  // Header bg — orange theme uses the primary accent (the saturated
+  // orange) since that *is* the iconic bit of the look.
+  --theme-header-bg: #ff6b35;
+
+  // Text.
+  --theme-text-primary: #f5e6d3;   // warm cream
+  --theme-text-muted: #888;
+  --theme-text-faint: #5a5a6e;
+
+  // Accents.
+  --theme-accent-primary: #ff6b35; // orange — borders, header, hover
+  --theme-accent-primary-soft: rgba(255, 107, 53, 0.12);
+  --theme-accent-primary-stroke: rgba(255, 107, 53, 0.4);
+  --theme-accent-secondary: #ffd600; // amber — links, secondary highlight
+  --theme-accent-info: #00acc1;       // cyan — info / live indicator
+  --theme-accent-llm: #7cdb40;        // phosphor green — LLM events
+  --theme-accent-warn: #ffd600;
+  --theme-accent-error: #ff5252;
+  --theme-accent-positive: #2e7d32;
+}
+
+:root[data-theme="green"] {
+  // Surfaces — near-black with a green tint, deepening toward black.
+  --theme-bg-page: #050a05;
+  --theme-bg-panel: #0a1108;
+  --theme-bg-toolbar: #0d1a0d;
+  --theme-bg-deep: #020602;
+  --theme-bg-deeper: #000200;
+  --theme-bg-code: #0d1d0d;
+
+  // Header bg — pulled apart from the accent so the header itself can
+  // sit darker than the body chrome, more like a dim CRT bezel.
+  --theme-header-bg: #030803;
+
+  // Text — muted phosphor green (P1-style, ~#33cc33 region) for long
+  // reading sessions; faded for muted, near-grey for the faintest level
+  // so the eye still gets a hierarchy without burning at #66ff66.
+  --theme-text-primary: #3fbf3f;
+  --theme-text-muted: #4a7a4a;
+  --theme-text-faint: #2e5a2e;
+
+  // Accents — moderately-saturated greens + a kept-red for errors.
+  --theme-accent-primary: #2fbf5f;
+  --theme-accent-primary-soft: rgba(47, 191, 95, 0.14);
+  --theme-accent-primary-stroke: rgba(47, 191, 95, 0.45);
+  --theme-accent-secondary: #88bb22;
+  --theme-accent-info: #5cbf5c;
+  --theme-accent-llm: #88cc33;
+  --theme-accent-warn: #aacc00;
+  --theme-accent-error: #ff5050;
+  --theme-accent-positive: #2fbf5f;
+}
+
+// Body chrome follows the active theme so the page itself flips
+// background colour even before any component-level styles kick in.
+body {
+  background: var(--theme-bg-page);
+  color: var(--theme-text-primary);
+  transition: background 0.18s ease-in-out, color 0.18s ease-in-out;
+}

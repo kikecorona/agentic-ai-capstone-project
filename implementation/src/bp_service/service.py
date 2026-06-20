@@ -47,16 +47,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.shared.llm import get_chat_llm
 from src.shared.otel_client import OTelClient
-from src.shared.service_log import get_logger
+from src.shared.service_log import format_exception, get_logger
 
 from .clients import RAGClient, SDClient
 from .compose import (
     PageEscalation,
     compose_page,
     extract_service_candidates,
+    merge_into_existing,
     replace_placeholder_block,
     resolve_sd_links,
+)
+from .enrich import (
+    BP_REQUIRED_SECTIONS,
+    detect_gaps,
+    extract_answered_sme_blocks,
+    fill_gap,
+    side_info_revision,
+    wrap_sme_answer,
 )
 from .ingest import normalize_input
 from .pages import PageStore
@@ -87,6 +97,13 @@ class RefreshOutcome:
     escalations: list[dict[str, Any]]
     skipped: bool = False
     skip_reason: str | None = None
+    # ``wrote=True`` when the enriched page was actually committed to
+    # the page store (i.e. ``write_page`` ran). ``wrote=False`` covers
+    # both the early skip-unchanged path AND the post-merge
+    # "no enrichment changes" path where the merged content hashed to
+    # the same value as the existing page. Lets ``dispatch_refresh``
+    # surface a ``wrote/skipped_write`` split on the response.
+    wrote: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -209,31 +226,35 @@ class BPService:
     # ------------------------------------------------------- dispatch_refresh
 
     def dispatch_refresh(self, *, event: dict[str, Any]) -> dict[str, Any]:
-        """Background-mode entry point (§9.3.2).
+        """Background-mode entry point (§9.3.2 — enrich-existing flow).
 
         ``event`` matches the orchestrator's REST envelope shape:
-        ``{event_type, doc_id_or_commit_sha, change_kind, source}``.
+        ``{event_type, doc_id_or_commit_sha, change_kind, source, force}``.
 
-        For BP, ``doc_id_or_commit_sha`` carries the input-doc URI for a
-        single-doc refresh, or is empty for a full refresh that scans
-        every input doc the page store knows about.
+        Iteration target is the set of *existing* BP pages found under
+        the page store's pages prefix (``documentation/bp/`` by default).
+        Each page is read, gap-detected via the LLM, filled from RAG
+        (with SME-PLACEHOLDER fallback for low-confidence retrieval),
+        merged back, and re-indexed.
+
+        ``doc_id_or_commit_sha``:
+          * empty → enrich every existing page **and** discover new ones
+            from SD's doc-index (products referenced by SD pages but
+            without a BP page yet).
+          * non-empty → treat as a single page URI, enrich just that one.
         """
         change_kind = (event or {}).get("change_kind", "modified")
-        single_doc = (event or {}).get("doc_id_or_commit_sha") or ""
-        # Operator override — bypass `sources_inventory.is_unchanged()`
-        # so a manual refresh from the portal can re-run the pipeline
-        # against a fully-indexed corpus. See orchestrator
-        # ``RefreshRequest.force``.
+        single_page = (event or {}).get("doc_id_or_commit_sha") or ""
         force = bool((event or {}).get("force"))
 
-        if single_doc:
-            sources = [single_doc]
+        if single_page:
+            pages = [single_page]
         else:
-            sources = self._pages.list_inputs()
+            pages = self._pages.list_pages()
 
         log.info(
             f"dispatch_refresh start change_kind={change_kind} "
-            f"sources={len(sources)} single_doc={single_doc!r} force={force}"
+            f"pages={len(pages)} single={single_page!r} force={force}"
         )
 
         with self._otel.span(
@@ -241,34 +262,53 @@ class BPService:
             mcp_method="dispatch_refresh",
         ) as span:
             span.set_attribute("change_kind", change_kind)
-            span.set_attribute("source_count", len(sources))
+            span.set_attribute("page_count", len(pages))
             span.set_attribute("force", force)
             outcomes: list[RefreshOutcome] = []
-            for src in sources:
+
+            # 1) Enrich every existing page.
+            for page_uri in pages:
                 try:
                     outcomes.append(
-                        self._refresh_one(source_uri=src, change_kind=change_kind, force=force)
+                        self._refresh_one(
+                            page_uri=page_uri,
+                            change_kind=change_kind,
+                            force=force,
+                        )
                     )
-                except Exception as exc:  # noqa: BLE001 — per-doc isolation
-                    log.error(f"dispatch_refresh: {src} failed: {exc}")
+                except Exception as exc:  # noqa: BLE001 — per-page isolation
+                    details = format_exception(exc)
+                    log.error(f"dispatch_refresh: {page_uri} failed: {details}")
                     outcomes.append(RefreshOutcome(
-                        page_uri=self._page_uri_for(src),
+                        page_uri=page_uri,
                         chunks_indexed=0,
                         chunking_strategy=None,
                         embedding_revision=None,
                         referenced_services=[],
                         open_placeholders=[],
-                        escalations=[{"error": f"{type(exc).__name__}: {exc}"}],
+                        escalations=[{"error": details}],
                         skipped=True,
                         skip_reason="refresh_error",
                     ))
+
+            # 2) New-page discovery — only on a full refresh.
+            if not single_page:
+                discovered = self._discover_new_pages(known_page_uris=set(pages), force=force)
+                for outcome in discovered:
+                    outcomes.append(outcome)
+                if discovered:
+                    log.info(
+                        f"dispatch_refresh: stubbed {len(discovered)} new BP page(s)"
+                    )
+
             affected_pages = [o.page_uri for o in outcomes if not o.skipped]
             escalations = [e for o in outcomes for e in o.escalations]
             span.set_status("ok")
             span.set_payload_summary({
-                "sources_seen": len(sources),
+                "pages_seen": len(pages),
                 "affected_pages": len(affected_pages),
                 "escalations": len(escalations),
+                "discovered": sum(1 for o in outcomes if (o.skip_reason or "") == "stub_created"),
             })
             log.info(
                 f"dispatch_refresh done affected_pages={len(affected_pages)} "
@@ -293,111 +333,277 @@ class BPService:
                 ],
             }
 
-    def _refresh_one(self, *, source_uri: str, change_kind: str, force: bool = False) -> RefreshOutcome:
-        """Run the background pipeline for a single input doc."""
-        page_uri = self._page_uri_for(source_uri)
-        try:
-            raw = self._pages.read_input(source_uri)
-        except FileNotFoundError:
-            log.warn(f"_refresh_one: input {source_uri!r} not found; treating as deletion")
-            self._inv.delete(source_uri)
-            self._doc_index.delete(page_uri)
-            try:
-                self._rag.delete(domain="bp", source_uri=page_uri)
-            except Exception as exc:  # noqa: BLE001
-                log.error(f"_refresh_one: rag.delete({page_uri!r}) failed: {exc}")
-            return RefreshOutcome(
-                page_uri=page_uri,
-                chunks_indexed=0,
-                chunking_strategy=None,
-                embedding_revision=None,
-                referenced_services=[],
-                open_placeholders=[],
-                escalations=[],
-                skipped=True,
-                skip_reason="input_not_found",
-            )
+    # ------------------------------------------------------------------ enrich
 
-        norm = normalize_input(source_uri=source_uri, raw_text=raw)
+    def _refresh_one(self, *, page_uri: str, change_kind: str, force: bool = False) -> RefreshOutcome:
+        """Read existing BP page → detect gaps → fill via RAG / SME →
+        merge back → re-index. The caller is responsible for catching
+        per-page failures so one bad page doesn't kill the batch.
 
-        # Skip-unchanged: §9.3.3 explicitly says we use sources_inventory
-        # to skip unchanged files on the next refresh. `force=True`
-        # bypasses this so manual portal refreshes can re-run end-to-end
-        # on an already-indexed corpus.
-        if not force and self._inv.is_unchanged(source_uri, norm.content_hash):
-            existing = self._doc_index.get(page_uri)
-            if existing is not None:
-                log.info(f"_refresh_one: {source_uri} unchanged; skipping")
+        Wraps the work in an OTel ``enrich_page`` span so the Dashboard
+        can surface per-page outcomes (``enriched`` / ``unchanged`` /
+        ``escalated_only`` / ``stub_created`` / ``error``).
+        """
+        with self._otel.span(
+            service=SERVICE_NAME,
+            mcp_method="enrich_page",
+        ) as span:
+            span.set_attribute("page_uri", page_uri)
+            span.set_attribute("force", force)
+
+            existing = self._pages.read_page(page_uri)
+            if existing is None:
+                log.warn(f"_refresh_one: {page_uri!r} not found on disk; treating as deletion")
+                self._doc_index.delete(page_uri)
+                try:
+                    self._rag.delete(domain="bp", source_uri=page_uri)
+                except Exception as exc:  # noqa: BLE001
+                    log.error(f"_refresh_one: rag.delete({page_uri!r}) failed: {exc}")
+                span.set_status("page_deleted")
                 return RefreshOutcome(
                     page_uri=page_uri,
                     chunks_indexed=0,
-                    chunking_strategy=existing.chunking_strategy,
-                    embedding_revision=existing.embedding_revision,
-                    referenced_services=existing.referenced_services,
-                    open_placeholders=existing.open_placeholders,
+                    chunking_strategy=None,
+                    embedding_revision=None,
+                    referenced_services=[],
+                    open_placeholders=[],
+                    escalations=[],
+                    skipped=True,
+                    skip_reason="page_not_found",
+                )
+
+            prior = self._doc_index.get(page_uri)
+            page_hash = _hash_text(existing)
+
+            # Skip-unchanged: page content hash matches AND side-info hash
+            # matches. ``force=True`` bypasses both. The side-info hash is
+            # computed fresh below so the caller can detect "page unchanged
+            # but SD doc-index changed".
+            sd_summary = self._collect_sd_summary()
+            sd_revision = side_info_revision(sd_summary)
+            if (
+                not force
+                and prior is not None
+                and prior.content_hash == page_hash
+                and (prior.side_info_revision or "") == sd_revision
+            ):
+                log.info(
+                    f"_refresh_one: {page_uri} unchanged (page+side-info); skipping"
+                )
+                span.set_status("unchanged")
+                span.set_attribute("gap_count", 0)
+                return RefreshOutcome(
+                    page_uri=page_uri,
+                    chunks_indexed=0,
+                    chunking_strategy=prior.chunking_strategy,
+                    embedding_revision=prior.embedding_revision,
+                    referenced_services=prior.referenced_services,
+                    open_placeholders=prior.open_placeholders,
                     escalations=[],
                     skipped=True,
                     skip_reason="unchanged",
                 )
 
-        log.info(
-            f"_refresh_one: indexing {source_uri} -> {page_uri} "
-            f"(hash={norm.content_hash[:12]})"
-        )
-        rag_index_result = self._rag.index(
-            domain="bp",
-            source_uri=page_uri,
-            document=norm.text,
-            content_hash=norm.content_hash,
-        )
-        chunks_indexed = int(rag_index_result.get("chunks_indexed", 0))
+            title = _title_from_content(existing) or _stem_title(page_uri)
 
-        # Cross-reference resolution.
-        candidates = extract_service_candidates(norm.text)
-        product_id = _slug(norm.title) if norm.title else _slug(Path(source_uri).stem)
-        refs = resolve_sd_links(product_id=product_id, candidates=candidates, sd=self._sd)
+            # Preserve any SME-answered prose carried by the previous page
+            # body so re-enrichment doesn't overwrite human-authored answers.
+            answered_blocks = extract_answered_sme_blocks(existing)
+            if prior and prior.answered_sme_blocks:
+                # Union of disk-scraped and doc-index-tracked answers.
+                for qid, info in prior.answered_sme_blocks.items():
+                    answered_blocks.setdefault(qid, info)
 
-        last_updated = time.time()
-        composed = compose_page(
-            page_uri=page_uri,
-            title=norm.title,
-            source_uri=source_uri,
-            body=norm.text,
-            references=refs,
-            last_updated=last_updated,
-            content_hash=norm.content_hash,
-        )
-        commit_sha = self._pages.write_page(page_uri, composed.content)
-        log.info(
-            f"_refresh_one: wrote {page_uri} commit={commit_sha} "
-            f"refs={len(composed.referenced_services)} "
-            f"placeholders={len(composed.open_placeholders)}"
-        )
+            # Detect gaps via the LLM judge.
+            llm = self._get_chat_llm()
+            gap_plan = detect_gaps(existing, page_title=title, llm=llm)
+            log.info(
+                f"_refresh_one: {page_uri} → {len(gap_plan.gaps)} gap(s); "
+                f"answered={len(answered_blocks)} force={force}"
+            )
+            span.set_attribute("gap_count", len(gap_plan.gaps))
+            span.set_attribute("answered_block_count", len(answered_blocks))
+            span.set_attribute("is_substantive", gap_plan.is_substantive)
 
-        # Persist sources inventory + doc index.
-        self._inv.upsert(source_uri, norm.content_hash, metadata={"page_uri": page_uri})
-        self._doc_index.upsert(DocIndexEntry(
-            page_uri=page_uri,
-            title=composed.title,
-            last_updated=last_updated,
-            source_documents=[source_uri],
-            content_hash=norm.content_hash,
-            chunking_strategy=rag_index_result.get("chunking_strategy"),
-            embedding_revision=rag_index_result.get("embedding_revision"),
-            open_placeholders=composed.open_placeholders,
-            referenced_services=composed.referenced_services,
-            metadata={"commit_sha": commit_sha, "change_kind": change_kind},
-        ))
+            # Fill each gap.
+            filled = []
+            escalations: list[PageEscalation] = []
+            for gap in gap_plan.gaps:
+                fg = fill_gap(
+                    gap,
+                    page_uri=page_uri,
+                    page_title=title,
+                    rag=self._rag,
+                    answered_sme_blocks=answered_blocks,
+                )
+                filled.append(fg)
+                if fg.is_sme_placeholder and fg.question_id:
+                    escalations.append(PageEscalation(
+                        question_id=fg.question_id,
+                        placeholder_id=fg.question_id,
+                        topic=gap.section_title,
+                        question=gap.fill_prompt,
+                        best_guess=None,
+                        page_uri=page_uri,
+                    ))
 
-        return RefreshOutcome(
-            page_uri=page_uri,
-            chunks_indexed=chunks_indexed,
-            chunking_strategy=rag_index_result.get("chunking_strategy"),
-            embedding_revision=rag_index_result.get("embedding_revision"),
-            referenced_services=composed.referenced_services,
-            open_placeholders=composed.open_placeholders,
-            escalations=[_envelope(esc) for esc in composed.escalations],
-        )
+            filled_substantive = sum(
+                1 for fg in filled if not fg.is_sme_placeholder
+            )
+            span.set_attribute("filled_count", filled_substantive)
+            span.set_attribute("escalated_count", len(escalations))
+
+            if filled:
+                sections = [(fg.gap.section_title, fg.section_md) for fg in filled]
+                new_content = merge_into_existing(
+                    existing_content=existing,
+                    sections=sections,
+                )
+            else:
+                new_content = existing
+
+            # Cross-reference resolution from the merged content.
+            candidates = extract_service_candidates(new_content)
+            product_id = _slug(title)
+            refs = resolve_sd_links(product_id=product_id, candidates=candidates, sd=self._sd)
+
+            # Only write if we actually changed something.
+            new_hash = _hash_text(new_content)
+            if new_hash == page_hash and not force:
+                log.info(f"_refresh_one: {page_uri} no enrichment changes; skipping write")
+                commit_sha = (prior.metadata.get("commit_sha") if prior else None) or ""
+            else:
+                commit_sha = self._pages.write_page(page_uri, new_content)
+                log.info(
+                    f"_refresh_one: wrote {page_uri} commit={commit_sha} "
+                    f"refs={len(refs)} placeholders={len(escalations)}"
+                )
+
+            # Re-index in RAG against the (possibly enriched) page.
+            rag_index_result: dict[str, Any] = {}
+            try:
+                rag_index_result = self._rag.index(
+                    domain="bp",
+                    source_uri=page_uri,
+                    document=new_content,
+                    content_hash=new_hash,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error(f"_refresh_one: rag.index({page_uri!r}) failed: {exc}")
+
+            chunks_indexed = int(rag_index_result.get("chunks_indexed", 0))
+            last_updated = time.time()
+
+            # Persist sources inventory + doc index. Sources inventory now
+            # tracks the BP page itself rather than a separate input doc.
+            self._inv.upsert(page_uri, new_hash, metadata={"page_uri": page_uri})
+            open_placeholder_ids = [esc.question_id for esc in escalations]
+            self._doc_index.upsert(DocIndexEntry(
+                page_uri=page_uri,
+                title=title,
+                last_updated=last_updated,
+                source_documents=[page_uri],
+                content_hash=new_hash,
+                chunking_strategy=rag_index_result.get("chunking_strategy"),
+                embedding_revision=rag_index_result.get("embedding_revision"),
+                open_placeholders=open_placeholder_ids,
+                referenced_services=[r.candidate for r in refs if r.resolved],
+                side_info_revision=sd_revision,
+                answered_sme_blocks=answered_blocks,
+                metadata={"commit_sha": commit_sha, "change_kind": change_kind},
+            ))
+
+            # Span status: "enriched" if we filled anything substantive,
+            # "escalated_only" if every gap got pushed to SME,
+            # "unchanged" if we found nothing to do.
+            if filled_substantive > 0:
+                span.set_status("enriched")
+            elif escalations:
+                span.set_status("escalated_only")
+            else:
+                span.set_status("unchanged")
+
+            return RefreshOutcome(
+                page_uri=page_uri,
+                chunks_indexed=chunks_indexed,
+                chunking_strategy=rag_index_result.get("chunking_strategy"),
+                embedding_revision=rag_index_result.get("embedding_revision"),
+                referenced_services=[r.candidate for r in refs if r.resolved],
+                open_placeholders=open_placeholder_ids,
+                escalations=[_envelope(esc) for esc in escalations],
+            )
+
+    # --------------------------------------------------- new-page discovery
+
+    def _discover_new_pages(
+        self, *, known_page_uris: set[str], force: bool
+    ) -> list[RefreshOutcome]:
+        """Walk SD's doc-index for products referenced by SD pages that
+        don't yet have a BP page. For each missing product, write a
+        minimal stub page so the next refresh can enrich it normally.
+
+        Returns one RefreshOutcome per stubbed page (with
+        ``skip_reason='stub_created'`` so the caller can count it).
+        """
+        sd_summary = self._collect_sd_summary()
+        if not sd_summary:
+            return []
+
+        # Build the set of product slugs SD already references.
+        referenced: set[str] = set()
+        for entry in sd_summary.get("pages", []):
+            for prod in entry.get("referenced_products") or []:
+                slug = _slug(prod)
+                if slug:
+                    referenced.add(slug)
+
+        out: list[RefreshOutcome] = []
+        for slug in sorted(referenced):
+            stub_page_uri = f"{self._page_prefix}{slug}.md"
+            if stub_page_uri in known_page_uris:
+                continue
+            if self._doc_index.get(stub_page_uri) is not None and not force:
+                continue
+            try:
+                self._pages.write_page(stub_page_uri, _stub_page_md(slug))
+                log.info(f"_discover_new_pages: stubbed {stub_page_uri}")
+                out.append(RefreshOutcome(
+                    page_uri=stub_page_uri,
+                    chunks_indexed=0,
+                    chunking_strategy=None,
+                    embedding_revision=None,
+                    referenced_services=[],
+                    open_placeholders=[],
+                    escalations=[],
+                    skipped=True,
+                    skip_reason="stub_created",
+                ))
+            except Exception as exc:  # noqa: BLE001
+                log.error(f"_discover_new_pages: stub {stub_page_uri} failed: {exc}")
+        return out
+
+    def _collect_sd_summary(self) -> dict[str, Any]:
+        """Pull the SD doc-index summary used as side-info during
+        enrichment + new-page discovery. Tolerant of older SD clients
+        that don't expose ``list_pages``: returns ``{}`` on any error."""
+        try:
+            pages = self._sd.list_pages() if hasattr(self._sd, "list_pages") else []
+        except Exception as exc:  # noqa: BLE001
+            log.warn(f"_collect_sd_summary: sd.list_pages failed: {exc}")
+            return {}
+        return {"pages": pages or []}
+
+    def _get_chat_llm(self):
+        """Lazy LLM instance for enrichment. Cached on the service so
+        the rubric prompt fits the same warm Ollama context across
+        every page in a refresh batch."""
+        if not hasattr(self, "_chat_llm") or self._chat_llm is None:
+            self._chat_llm = get_chat_llm(
+                module="bp.enrich",
+                temperature=0.2,
+                json_mode=True,
+            )
+        return self._chat_llm
 
     # -------------------------------------------- find_products_for_service
 
@@ -461,10 +667,18 @@ class BPService:
                 span.set_status("not_found")
                 log.error(f"patch_page: {page_uri!r} does not exist")
                 raise FileNotFoundError(f"page not found: {page_uri}")
+            # Wrap the SME reply in matching SME-ANSWERED:<qid> fences so
+            # `extract_answered_sme_blocks` finds it on the next refresh
+            # and preserves the prose verbatim — without the fences the
+            # next enrichment pass would overwrite the answer with
+            # freshly-composed filler.
+            wrapped_replacement = wrap_sme_answer(
+                question_id=question_id, prose=replacement,
+            )
             new_content, replaced = replace_placeholder_block(
                 content,
                 question_id=question_id,
-                replacement=replacement,
+                replacement=wrapped_replacement,
             )
             if not replaced:
                 span.set_status("not_found")
@@ -485,12 +699,20 @@ class BPService:
                     source_uri=page_uri,
                     document=new_content,
                 )
-                # Refresh embedding_revision in the doc index.
+                # Refresh embedding_revision in the doc index AND
+                # persist the SME-answered prose so subsequent
+                # refreshes can match it from `answered_sme_blocks`
+                # even if the in-page fence detection misfires.
                 entry = self._doc_index.get(page_uri)
                 if entry is not None:
                     entry.embedding_revision = rag_res.get("embedding_revision")
                     entry.chunking_strategy = rag_res.get("chunking_strategy") or entry.chunking_strategy
                     entry.last_updated = time.time()
+                    entry.answered_sme_blocks = dict(entry.answered_sme_blocks or {})
+                    entry.answered_sme_blocks[question_id] = {
+                        "hash": _hash_text(replacement)[:12],
+                        "prose": replacement.strip(),
+                    }
                     self._doc_index.upsert(entry)
             except Exception as exc:  # noqa: BLE001
                 log.error(f"patch_page: rag.index({page_uri!r}) failed: {exc}")
@@ -585,6 +807,42 @@ class BPService:
 
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "untitled"
+
+
+def _hash_text(text: str) -> str:
+    import hashlib
+    return hashlib.sha1((text or "").encode("utf-8")).hexdigest()
+
+
+_TITLE_RE = re.compile(r"^\s*#\s+(?P<title>.+?)\s*$", re.MULTILINE)
+
+
+def _title_from_content(content: str) -> str | None:
+    """Pull the first ``# Heading`` from a Markdown page if present."""
+    if not content:
+        return None
+    m = _TITLE_RE.search(content)
+    return m.group("title").strip() if m else None
+
+
+def _stem_title(page_uri: str) -> str:
+    """Fallback title derived from the page filename when the page has
+    no ``# Heading`` (or hasn't been written yet)."""
+    stem = Path(page_uri).stem
+    return stem.replace("-", " ").replace("_", " ").title() or "Untitled"
+
+
+def _stub_page_md(slug: str) -> str:
+    """Minimal stub for a newly-discovered BP page. The next refresh
+    runs the full enrichment pass against this skeleton."""
+    title = slug.replace("-", " ").replace("_", " ").title()
+    return (
+        f"# {title}\n\n"
+        f"<!-- agent: stub page created from SD reference; "
+        f"will be filled on the next refresh -->\n\n"
+        f"## Overview\n\n"
+        f"TBD — describe what this product is and the problem it solves.\n"
+    )
 
 
 def _envelope(esc: PageEscalation) -> dict[str, Any]:

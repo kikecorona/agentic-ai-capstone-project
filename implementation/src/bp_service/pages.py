@@ -138,10 +138,12 @@ class GitHubPageStore:
     write goes through ``get_file_contents`` / ``create_or_update_file``.
 
     Production target for §8.5: BP and SD share a single docs repo with
-    ``documentation/inputs/`` (read-only org material), ``documentation/bp/``
-    (B&P-generated), and ``documentation/sd/`` (SD-generated). The two
-    prefixes are configurable so a deployment can keep inputs and outputs
-    in different folders.
+    ``documentation/bp/`` (B&P pages — read for enrichment AND written
+    back) and ``documentation/sd/`` (SD pages — same shape). The agent
+    iterates over the existing pages, fills detected gaps using
+    side-info (SD MCP / source code) and RAG, and writes back in place.
+    Both prefixes are configurable so a deployment can keep inputs and
+    outputs in different folders.
 
     Both prefixes are stored as POSIX strings inside the repo. URIs the
     rest of the codebase passes (e.g. ``bp/products/discovery.md``) are
@@ -153,7 +155,7 @@ class GitHubPageStore:
         self,
         *,
         github,
-        inputs_prefix: str = "documentation/inputs",
+        inputs_prefix: str = "documentation/bp",
         pages_prefix: str = "documentation/bp",
     ):
         self._gh = github

@@ -41,6 +41,7 @@ import os
 import sqlite3
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,26 @@ _STDLIB_LEVEL = {
     "warn": stdlib_logging.WARNING,
     "error": stdlib_logging.ERROR,
 }
+
+
+def format_exception(exc: BaseException) -> str:
+    """Render an exception with **type + repr + traceback** in one
+    string. Use anywhere an exception text is going to be persisted
+    into a task-row / escalation envelope / API response — many
+    exception types render to ``str(exc) == ""`` (bare ``Exception()``,
+    some httpx/asyncio/MCP wire errors), so plain ``f"failed: {exc}"``
+    messages tell the operator nothing.
+
+    Format:
+      ``ClassName: repr(exc)\\n<traceback>``
+
+    The traceback is rendered if and only if the exception carries a
+    ``__traceback__`` (i.e. we're inside ``except`` or chained from
+    one). Outside of an exception context, just the type+repr line.
+    """
+    head = f"{type(exc).__name__}: {exc!r}"
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return f"{head}\n{tb}".rstrip() if tb.strip() else head
 
 
 _SCHEMA = """
@@ -223,6 +244,15 @@ class ServiceLogger:
 
     def error(self, message: str) -> None:
         self._emit("error", message)
+
+    def exception(self, message: str, exc: BaseException) -> None:
+        """Log ``message`` at error level with the full exception
+        trace appended. Use at every top-level ``except`` that
+        surfaces a failure into a task row / escalation envelope —
+        many exception types render to ``str(exc) == ""``, so plain
+        ``f"failed: {exc}"`` messages tell the operator nothing.
+        """
+        self._emit("error", f"{message}\n{format_exception(exc)}")
 
     # -- internals ----------------------------------------------------------
 

@@ -95,6 +95,8 @@ class SDClient(Protocol):
 
     def get_page(self, page_uri: str) -> dict[str, Any] | None: ...
 
+    def list_pages(self) -> list[dict[str, Any]]: ...
+
 
 class StubSDClient:
     """In-memory stand-in until the SD specialist lands.
@@ -102,7 +104,9 @@ class StubSDClient:
     Construct with a hand-coded ``mapping`` from product_id (or any
     referent the BP page might mention) to a list of ``{service, page_uri,
     role}`` dicts. ``find_services_for_product`` returns the mapping
-    verbatim; ``get_page`` looks up by page_uri across all mappings.
+    verbatim; ``get_page`` looks up by page_uri across all mappings;
+    ``list_pages`` synthesises a doc-index dump out of the same mapping
+    so BP's new-page discovery can run end-to-end against the stub.
 
     Validation scripts use this to exercise B&P's cross-reference path
     without standing up the real SD service.
@@ -124,6 +128,29 @@ class StubSDClient:
                         "role": e.get("role"),
                     }
         return None
+
+    def list_pages(self) -> list[dict[str, Any]]:
+        """Synthesise SD doc-index entries from the mapping. Each unique
+        ``page_uri`` becomes one entry whose ``referenced_products`` is
+        the union of ``product_id`` keys that mention it — mirrors the
+        real SD doc-index shape closely enough for BP's
+        ``_collect_sd_summary`` + ``_discover_new_pages`` to work."""
+        by_page: dict[str, dict[str, Any]] = {}
+        for product_id, entries in self._mapping.items():
+            for e in entries:
+                page_uri = e.get("page_uri")
+                if not page_uri:
+                    continue
+                row = by_page.setdefault(page_uri, {
+                    "page_uri": page_uri,
+                    "service": e.get("service"),
+                    "referenced_products": [],
+                    "downstream_services": [],
+                    "open_placeholders": [],
+                })
+                if product_id not in row["referenced_products"]:
+                    row["referenced_products"].append(product_id)
+        return list(by_page.values())
 
     # Test/dev helper.
     def add(self, product_id: str, *services: dict[str, Any]) -> None:
