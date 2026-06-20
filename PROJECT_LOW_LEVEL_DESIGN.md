@@ -26,123 +26,73 @@ Autonomous RAG loop, the ToT chunking strategy, and SME interaction.
 
 #### 9.1.1 Responsibilities
 
-The RAG Service is the fourth component (alongside the Orchestrator, B&P, and SD). It owns:
-
-- The **shared Embeddings Database**.
-- The **embedding model**.
-- The **Autonomous RAG** loop ([Section 9.1.3.1](#9131-autonomous-rag-loop)) used at retrieval time.
-- The **ToT chunking strategy** sub-graph ([Section 9.1.3.2](#9132-tot-chunking-strategy)) used at
-  indexing time.
-
-It does *not* read source code, write to GitHub, talk to SMEs, or own any per-page state.
-Specialists never touch the embedding store directly — every read and every write goes through
-`RAG_MCP`.
+Owner of the **shared Embeddings Database**, the **embedding model**, the **Autonomous RAG loop**
+([§9.1.3.1](#9131-autonomous-rag-loop)), and the **ToT chunking sub-graph**
+([§9.1.3.2](#9132-tot-chunking-strategy)). Specialists never touch the embedding store directly
+— every read and every write goes through `RAG_MCP`. The service does not read source code, write
+to GitHub, or talk to SMEs.
 
 #### 9.1.2 APIs (MCP)
 
 Methods exposed by `RAG_MCP`:
 
-- `retrieve(query, domain_filter, mode) -> { status, answer, sources, retrieval_trail, grader_scores }` —
-  runs the Autonomous RAG loop. `domain_filter ∈ {bp, sd, both}` is pushed into the vector query;
-  `mode ∈ {query, background}` is advisory metadata that lets the loop tune limits and lets the
-  caller branch on the response. `status ∈ {ok, low_confidence, exhausted}` summarises the outcome:
-  `ok` means the answer cleared the grader **and** the answer re-grade (both axes — faithfulness
-  and answerability); `low_confidence` means the rewrite budget was exhausted but a best-effort
-  answer is included with the closest matches;
-  `exhausted` means no usable evidence was found and no answer is returned. The caller decides what
-  to do — query mode returns the answer (or a low-confidence fallback) to the user; background mode
-  may write an SME placeholder when `status` is `low_confidence` or `exhausted` on a sub-question
-  necessary for the page being built.
-- `index(domain, source_uri, document, content_hash) -> { chunks_indexed, chunking_strategy, embedding_revision }` —
-  runs the ToT chunking-strategy loop on the document, computes embeddings with the RAG Service's
-  embedding model, and persists chunks tagged with the caller's `domain`. The response gives the
-  specialist enough metadata to update its own `doc_index`. Existing chunks for the same
-  `(domain, source_uri)` are replaced atomically.
-- `delete(domain, source_uri)` — invalidate all chunks for a removed source, used when a B&P input
-  doc disappears or an SD page is retired.
+- `retrieve(query, domain_filter, mode) -> { status, answer, sources, retrieval_trail, grader_scores }`
+  — runs the Autonomous RAG loop. `domain_filter ∈ {bp, sd, both}` is pushed into the vector query;
+  `mode ∈ {query, background}` is advisory metadata. `status ∈ {ok, low_confidence, exhausted}`
+  summarises the outcome — `ok` means both grader axes (faithfulness and answerability) cleared,
+  `low_confidence` means the rewrite budget was exhausted but a best-effort answer + closest
+  matches are returned, `exhausted` means no usable evidence at all.
+- `index(domain, source_uri, document, content_hash) -> { chunks_indexed, chunking_strategy, embedding_revision }`
+  — runs the ToT chunking-strategy loop, computes embeddings, and persists chunks tagged with the
+  caller's `domain`. Existing chunks for the same `(domain, source_uri)` are replaced atomically.
+- `delete(domain, source_uri)` — invalidate all chunks for a removed source.
 
-`embed(chunks)` and `score_strategy(candidate_chunks, probe_questions)` are internal nodes of the
-ToT chunking sub-graph; they are not exposed externally because the specialists don't run that loop
-themselves.
+`embed` and `score_strategy` are internal nodes of the ToT sub-graph; they are not exposed
+externally because specialists don't run that loop themselves.
 
 #### 9.1.3 Implementation details
 
-*State and routing.* The RAG Service is one LangGraph state graph fronted by `RAG_MCP`; the entry
-node routes by method (`retrieve`, `index`, `delete`) into the matching sub-graph. Apart from the
-vector store itself, the service is stateless across requests — it does not track which page is
-"in flight" for either specialist. Index-quality flags (chunks that survive retrieval but repeatedly
-fail the grader) are emitted as part of the `retrieve` response so the calling specialist can
-decide to re-index that source with a different chunking strategy on the next refresh. The flag is
-naturally scoped by the `domain` tag the chunk carries, so re-indexing stays per-specialist.
-
-*LLM use.* The RAG Service calls the same local LLM that B&P and SD use, for the grader, the
-faithfulness re-grade, the query rewriter (in `retrieve`), and the probe-question generator + Q&A
-scoring (in `index`). All these calls are bounded and cacheable; for the POC the service runs
-in-process so there is no extra network hop.
-
-*Boundary.* The RAG Service trusts the caller's claim of `domain` ownership — there is no
-authentication beyond which MCP each specialist is wired to. B&P only writes `domain=bp`; SD only
-writes `domain=sd`. Reads can request any domain or `both`. Adding a future specialist (e.g.,
-Security) means giving it access to `RAG_MCP` and reserving a new `domain` tag — no schema change
-to the store, no code change in B&P or SD.
-
-The two internal sub-graphs are documented next.
+One LangGraph state graph fronted by `RAG_MCP`; the entry node routes by method into the matching
+sub-graph. Apart from the vector store itself, the service is stateless across requests. The
+**index-quality flag** — chunks that survive retrieval but repeatedly fail the grader — rides
+along on every `retrieve` response so the calling specialist can re-index that source on the next
+refresh. Domain isolation is enforced by which MCP each specialist is wired to: B&P only writes
+`domain=bp`, SD only writes `domain=sd`. Reads can request any domain or `both`. Adding a future
+specialist (e.g., Security) means a new wired MCP and a reserved `domain` tag — no schema change.
 
 ##### 9.1.3.1 Autonomous RAG loop
 
-[Sections 6.1–6.4](PROJECT.md#6-retrieval-design--rag-module-3) describe the **indexing-time** rationale.
-At **retrieval time** the RAG Service wraps the vector lookup in an **Autonomous RAG** loop so the
-caller can self-correct when retrieval is weak instead of returning a low-confidence answer silently.
-The loop has four nodes — **decide → retrieve → grade → rewrite** — wired as a LangGraph
-`StateGraph`, same harness style as the ToT loops
-([Section 7.5](PROJECT.md#75-mapping-tot-roles-to-tools)). It runs entirely inside the RAG Service;
-the caller (B&P or SD) sees only the response shape described in [Section 9.1](#91-rag-service-design).
+[Sections 6.1–6.4](PROJECT.md#6-retrieval-design--rag-module-3) cover indexing-time rationale. At
+**retrieval time** the RAG Service wraps the vector lookup in an Autonomous RAG loop so the caller
+can self-correct when retrieval is weak. Four nodes — **decide → retrieve → grade → rewrite** —
+wired as a LangGraph `StateGraph`. Caller (B&P or SD) sees only the response shape from
+[§9.1.2](#912-apis-mcp).
 
 The nodes:
 
-1. **Decision (router)** — classifies the query into `{no_retrieval, retrieve}` and, when retrieving,
-   honors the caller-supplied `domain_filter` ∈ `{bp, sd, both}`. Some questions are answered from
-   static context and skip retrieval entirely. The Orchestrator's dispatch envelope
-   ([Section 9.4](#94-orchestrator-service-design)) is what seeds the filter at the specialist; the
-   specialist passes it through to `RAG_MCP.retrieve`. The router can drop the filter on its own if
-   a single-domain hint produces nothing usable two rewrites in a row.
-2. **Retrieval** — similarity search against the chosen embedding
-   view ([Section 6.3](PROJECT.md#63-for-indexing-each-document)) on the shared Embeddings Database,
-   constrained by the router's `domain_filter`. K is small (2–5) since we pull the **whole document**
-   into context once it has been selected. There is no merge step — the filter (or its absence) is
-   pushed into the vector query and the grader sees a single ranked list.
-3. **Grader** — an LLM scores each retrieved document 0–3. If all are below threshold, the loop goes
-   to the rewriter; otherwise the survivors go to answer generation, followed by a second-pass
-   **answer re-grade** that scores the generated answer along two axes: **faithfulness** (every
-   claim is supported by a source — catches hallucinations) and **answerability** (the answer
-   substantively addresses the query — catches faithful refusals like *"the sources don't mention
-   X"* that pass the faithfulness check but leave the user without a real answer). Both axes are
-   gates: `status=ok` requires both to pass.
-4. **Query rewriter** — invoked when the grader produces nothing usable. Rewrites the query
-   (acronyms, synonyms, scope, sub-queries) and loops back to retrieval. Bounded to **R=2** rewrites
-   per question. May also widen `domain_filter` (e.g., from `bp` to `both`) when the failure pattern
-   suggests cross-domain evidence is needed.
+1. **Decision** — classifies the query into `{no_retrieval, retrieve}` and honours the
+   caller-supplied `domain_filter`. Static-context questions skip retrieval entirely.
+2. **Retrieval** — similarity search against the chosen embedding view
+   ([§6.3](PROJECT.md#63-for-indexing-each-document)) with `domain_filter` pushed into the vector
+   query. K is small (2–5) — we pull the **whole document** into context once selected. No merge
+   step; the grader sees a single ranked list.
+3. **Grader** — LLM scores each retrieved document 0–3. Survivors go to answer generation, then a
+   second-pass **answer re-grade** scores along two axes: **faithfulness** (every claim supported
+   by a source — catches hallucinations) and **answerability** (the answer substantively addresses
+   the query — catches faithful refusals like *"the sources don't mention X"*). Both axes gate
+   `status=ok`.
+4. **Query rewriter** — invoked when the grader produces nothing usable. Rewrites the query and
+   loops back to retrieval. Bounded to **R=2** rewrites; may widen `domain_filter` (e.g. `bp` →
+   `both`) when failure suggests cross-domain evidence is needed.
 
-Loop control and failure modes:
-
-- After R rewrites, the loop returns `status=low_confidence` with the closest matches, the rewrite
-  trail, and grader scores. If even the closest matches are below a "no signal at all" floor the
-  loop returns `status=exhausted` with no answer. The decision of what to do with each status is
-  the caller's: B&P/SD in **query mode** turn `low_confidence`/`exhausted` into a low-confidence
-  answer to the user; in **background mode** they turn it into an SME escalation
-  ([Section 9.5](#95-sme-interaction-module-6)) and write a placeholder block
-  ([Section 9.5.1](#951-placeholders-and-re-integration)).
-- If the post-generation answer re-grade fails on either axis (unsupported claims **or** a
-  non-substantive answer such as a graceful refusal), trigger one rewrite cycle; if it still fails
-  after the cycle, downgrade `status` to `low_confidence` and return.
-- If the same document repeatedly survives retrieval but fails the grader, the loop emits an
-  index-quality flag in the `retrieval_trail` so the calling specialist can re-index that source
-  with a different chunking strategy on the next refresh — closing the loop between retrieval and
-  indexing.
-- Cache `(query → graded retrieval)` for the lifetime of a single request.
-
-The router and rewriter can become ToT decision points later if their single-pass calls
-underperform; for the POC we keep them single-pass.
+**Loop control.** After R rewrites the loop returns `low_confidence` with the closest matches +
+trail, or `exhausted` when even the closest matches are below a "no signal" floor. Query-mode
+callers turn either into a low-confidence answer to the user; background-mode callers turn either
+into an SME escalation ([§9.5](#95-sme-interaction-module-6)). Failed answer re-grade triggers one
+rewrite cycle; if it still fails, downgrade to `low_confidence`. Repeated grader-fails on the same
+chunk emit an **index-quality flag** in the trail so the specialist can re-index that source on
+the next refresh — closing the loop between retrieval and indexing. Router and rewriter are
+single-pass for the POC; promoting either to a ToT decision point is a later option.
 
 ```mermaid
 %%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
@@ -169,94 +119,69 @@ class D,G,CF decision
 
 ##### 9.1.3.2 ToT: chunking strategy
 
-For each new or changed document arriving via `RAG_MCP.index` — input docs from B&P, generated SD
-pages from SD — the RAG Service picks a chunking strategy from the candidates in
-[Section 6.2](PROJECT.md#62-chunking-strategies) (per-paragraph, per-section, per-N-chars,
-summary-only, hybrid) using the ToT loop. The steps:
+For each new or changed document arriving via `RAG_MCP.index`, the RAG Service picks a chunking
+strategy from the candidates in [§6.2](PROJECT.md#62-chunking-strategies) (per-paragraph,
+per-section, per-N-chars, summary-only, hybrid) using the ToT loop:
 
-1. **Generate** — emit K=4 candidate strategies for the document (e.g. per-paragraph at 800 chars,
-   per-section, per-N at 1200 chars, summary-only).
-2. **Embed** — for each candidate, run the chunker, compute embeddings for every chunk, and stage
-   them in a temporary index.
-3. **Probe** — ask an LLM to read the document and produce N student-style Q&A pairs.
-4. **Score** — for each candidate, run the questions against its temporary index and compute the
-   similarity-over-M score: the fraction of questions whose top-K hit lands in the right chunk.
-5. **Prune** — drop candidates with score below 0.7.
-6. **Iterate** — beam-search keeps the top B=2–3 surviving candidates and expands variants
-   (different chunk sizes, hybrid combinations) for the next level. Stops at depth D=2–3 or when
-   one candidate clearly beats the others.
-7. **Persist** — the winning candidate's chunks and embeddings are written to the **shared
-   Embeddings Database** with the caller-supplied `domain` tag (`bp` or `sd`); the strategy itself
-   is persisted as metadata so retrieval-time grading can reuse it. Existing chunks for the same
-   `(domain, source_uri)` are replaced atomically.
+1. **Generate** — emit K=4 candidate strategies for the document.
+2. **Embed** — chunk + embed each candidate into a temporary index.
+3. **Probe** — LLM produces N student-style Q&A pairs from the document.
+4. **Score** — for each candidate, fraction of probe questions whose top-K hit lands in the right
+   chunk (similarity-over-M).
+5. **Prune & iterate** — drop candidates below 0.7; beam-search keeps top B=2–3 and expands
+   variants. Stops at depth D=2–3 or when one candidate clearly wins.
+6. **Persist** — winning chunks + embeddings written to the shared store with the caller's
+   `domain` tag; existing chunks for the same `(domain, source_uri)` replaced atomically. The
+   strategy itself is persisted as metadata.
 
 If no candidate clears the threshold at depth D, the document is tagged low-confidence and indexed
-with the highest-scoring strategy anyway; the response signals the low-confidence index so the
-calling specialist can decide whether to surface a follow-up or accept the imperfect index.
-
-This sub-graph is owned end-to-end by the RAG Service: B&P and SD do not run it themselves and do
-not need to know which strategy won — they only see the response metadata
-(`chunking_strategy`, `embedding_revision`) returned by `RAG_MCP.index`, which they record in their
-own `doc_index`. The probe step's question generator is content-driven, so domain prose differences
-(B&P narrative vs SD structured prose) flow through naturally — the winning strategy can differ per
-page without any specialist-specific tuning.
+with the highest-scoring strategy anyway. This sub-graph is owned end-to-end by the RAG Service —
+specialists only see `chunking_strategy` + `embedding_revision` in the response and record them in
+their `doc_index`. Probe questions are content-driven, so domain prose differences (BP narrative
+vs SD structured prose) flow through naturally.
 
 ### 9.2 SD Service design
 
 #### 9.2.1 Responsibilities
 
-The SD agent owns the **SD pages** in GitHub, the **SD doc index** (per-page metadata, including
-the page's content hash, a source-code-derived `side_info_revision` snapshot, and any
-`answered_sme_blocks` preserved from prior refreshes), and the **SD sources inventory** (last-known
-commit shas of the source-code subdirectories the SD specialist analyses). It iterates over the
-existing SD pages, fills detected gaps using freshly-pulled source-code analysis (`analyze_code`
-on the matching subdir under `SD_SOURCES_GH_PATH`) plus RAG retrieval, escalates unresolvable
-gaps as `SME-PLACEHOLDER` blocks, and discovers new pages from services in source code that
-don't yet have an SD page. It does *not* embed or chunk anything itself, write into B&P pages,
-or talk to the embedding store directly — retrieval and indexing go through `RAG_MCP`.
+Owner of the **SD pages** in GitHub, the **SD doc index** (per-page metadata: content hash,
+source-derived `side_info_revision`, and `answered_sme_blocks` preserved across refreshes), and
+the **SD sources inventory** (last-known commit shas of the source-code subdirectories it
+documents). Iterates over existing SD pages, fills detected gaps using freshly-pulled source-code
+analysis plus RAG retrieval, escalates unresolvable gaps as `SME-PLACEHOLDER` blocks, and
+discovers new pages from services in source code that don't yet have one. Retrieval and indexing
+go through `RAG_MCP`; SD never embeds, chunks, writes into BP, or hits the embedding store
+directly.
 
 #### 9.2.2 APIs (MCP)
 
 Methods exposed by `SD_MCP`:
 
 - `dispatch_query(query, domain_hint, context) -> { status, answer, sources, retrieval_trail }` —
-  query-mode entry point. The Orchestrator calls this with the user's question and the dispatch
-  envelope. SD runs its query-mode graph (delegates to `RAG_MCP.retrieve` with
-  `domain_filter=sd`/`both`, falls back to focused `analyze_code` if the response is
-  `low_confidence`/`exhausted`) and returns a composed answer with citations.
+  query-mode entry point. Delegates to `RAG_MCP.retrieve`; falls back to focused `analyze_code` on
+  `low_confidence` / `exhausted`.
 - `dispatch_refresh(event) -> { affected_pages, escalations }` — background-mode entry point.
-  Iterates the **union** of existing SD pages (`documentation/sd/`) and services in
-  `SD_SOURCES_GH_PATH`. Each existing page is read, gap-detected via the LLM judge, filled from
-  RAG with the matching service's source-code analysis as side-info, and merged back in place.
-  Services with no SD page yet fall through to the original "analyze → ToT dep graph → compose"
-  path so newly-added services pick up a starter page on the next refresh.
-  `force=true` bypasses the per-page skip-unchanged check.
+  Iterates the union of existing SD pages and services in source code; new services without a
+  page fall through to the original "analyze → ToT dep graph → compose" path so they pick up a
+  starter page on the next refresh. `force=true` bypasses skip-unchanged.
 - `find_services_for_product(product_id) -> [{ service, endpoint, role }]` — relational
-  cross-reference, called by B&P during `resolve_sd_links`. Reads from SD's `doc_index` only — no
-  LLM, no `RAG_MCP.retrieve` call.
-- `get_page(page_uri) -> { content, doc_index_entry }` — read an SD page's current content and
-  metadata, called by the Orchestrator before `patch_page` and by the cross-reference validator.
+  cross-reference, called by B&P during `resolve_sd_links`. `doc_index` only — no LLM.
 - `list_pages() -> [{ page_uri, service, referenced_products, downstream_services, ... }]` —
-  pure relational dump of the SD doc-index. Called by B&P's enrichment pipeline as side-info
-  ("which products do SD pages reference?") and by B&P's new-page discovery (products without
-  a BP page).
-- `patch_page(page_uri, question_id, replacement) -> { commit_sha }` — replace the fenced
-  `SME-PLACEHOLDER:question_id` block in the page with the SME's resolved text wrapped in a
-  matching `SME-ANSWERED:question_id` fence. The wrapping is what lets the next refresh detect
-  and preserve the answered prose verbatim instead of overwriting it. Updates
-  `open_placeholders` and `answered_sme_blocks` in the SD `doc_index` and triggers
-  `RAG_MCP.index` for the patched page.
+  pure relational dump used by B&P enrichment as side-info and for new-page discovery.
+- `get_page(page_uri) -> { content, doc_index_entry }` — read current page + metadata.
+- `patch_page(page_uri, question_id, replacement) -> { commit_sha }` — replace the
+  `SME-PLACEHOLDER:question_id` block with the SME's text wrapped in a matching
+  `SME-ANSWERED:question_id` fence; updates `open_placeholders` / `answered_sme_blocks` and
+  triggers `RAG_MCP.index`.
 
 #### 9.2.3 Implementation details
 
-The SD agent is a LangGraph state graph fronted by `SD_MCP`. Two operating modes share the
-same state — **background** (refresh) and **query** — and the same `analyze_code` node powers
-both, so live answers stay consistent with the last refresh's output.
+One LangGraph state graph fronted by `SD_MCP`. Background and query modes share the same
+`analyze_code` node so live answers stay consistent with the last refresh.
 
-**Background mode — `dispatch_refresh`** iterates the union of *existing SD pages* (read from
-the page store) and *services discovered in source code* (read from the source store).
-Existing pages take the enrich-existing path; services without a page yet fall back to the
-compose-from-scratch path used at first run.
+**Background — `dispatch_refresh`** iterates the union of *existing SD pages* and *services
+discovered in source code*. Existing pages take the enrich path; services without a page fall
+back to compose-from-scratch.
 
 ```mermaid
 flowchart TD
@@ -276,7 +201,7 @@ flowchart TD
     class Start,Done boundary
 ```
 
-**Per-page enrich-existing flow:**
+**Per-page enrich flow:**
 
 ```mermaid
 flowchart TB
@@ -323,52 +248,44 @@ flowchart TB
 | `data-store`            | Overview · Schema · Access patterns · Consistency · retention · Open Questions |
 | `other`                 | Overview · Details · Open Questions |
 
-**Gap criteria** — a section is a gap iff one of: heading is missing; body is empty; body is
-a boilerplate marker (`TBD` / `TODO` / `FIXME` / `WIP` / `N/A` / "to be filled" / "add
-details" / "placeholder"); body contains a `SME-PLACEHOLDER` fence. **Subjective judgments
-("could be more detailed") are explicitly NOT gap criteria.** As defence-in-depth,
-`compose.merge_into_existing` runs `_section_body_is_fillable` before overwriting any
-matched heading; substantive prose is never replaced even when the detector mis-flags it.
+**Gap criteria** — a section is a gap iff: heading missing, body empty, body is a boilerplate
+marker (`TBD` / `TODO` / `FIXME` / `WIP` / `N/A` / "to be filled" / "add details" / "placeholder"),
+or body contains a `SME-PLACEHOLDER` fence. **Subjective judgments ("could be more detailed") are
+NOT gap criteria.** As defence-in-depth, `merge_into_existing` runs a fillable-body check before
+overwriting any matched heading; substantive prose is never replaced even when the detector
+mis-flags it.
 
 **Fill strategies** (one per gap, picked by the detector):
 
-* **`source`** — answer is in the source-code analysis (endpoints, downstream calls, data
-  stores). Composed by a prose-LLM (`get_chat_llm(module="sd.enrich.compose",
-  json_mode=False)`) from the analysis JSON; no RAG retrieve. Falls through to RAG on prose-
-  LLM error so a single hiccup doesn't stall the refresh.
-* **`rag`** — needs prose context not in the code. Auto-RAG retrieve (§9.1.3.1) with the
-  analysis appended as a context hint. `low_confidence` / `exhausted` → SME-PLACEHOLDER (§9.5).
+* **`source`** — answer is in the source-code analysis (endpoints, downstream calls, data stores).
+  Composed by a prose-LLM from the analysis JSON; no RAG retrieve. Falls through to RAG on
+  prose-LLM error so a single hiccup doesn't stall the refresh.
+* **`rag`** — needs prose context not in the code. Auto-RAG retrieve (§9.1.3.1) with the analysis
+  appended as a context hint. `low_confidence` / `exhausted` → SME-PLACEHOLDER (§9.5).
 
-**Skip-unchanged + ordering:**
+**Skip & ordering.** Per-page skip iff `(page_hash, side_info_revision)` both match the prior
+refresh — `side_info_revision` hashes the source analysis, so a code change re-enriches even when
+page bytes didn't move. `force=true` bypasses both checks. The orchestrator runs SD's
+`dispatch_refresh` to completion before BP's, so BP sees the freshly-written SD doc-index.
 
-* Per-page skip iff `(page_hash, side_info_revision)` both match the prior refresh.
-  `side_info_revision` hashes the source-code analysis, so a code change re-enriches even
-  when the page bytes didn't change.
-* `force=true` (operator override from the portal) bypasses both checks.
-* The orchestrator runs **SD's `dispatch_refresh` to completion before BP's**, so BP's
-  `_collect_sd_summary()` and `resolve_sd_links()` see the freshly-written SD doc-index.
+**SME continuity.** `SME-ANSWERED:question_id` fences inside a page body are detected
+pre-enrichment and reused verbatim instead of re-asking. `answered_sme_blocks` in the doc-index
+carries them across refreshes as a second line of defence.
 
-**SME continuity** — `<!-- SME-ANSWERED:question_id ... -->` fences inside a page body are
-detected pre-enrichment and reused verbatim instead of re-asking. Doc-index
-`answered_sme_blocks` carries them across refreshes as a second line of defence.
+**Telemetry.** Every page emits an `sd_service.enrich_page` OTel span with `page_kind`,
+`gap_count`, `filled_count`, `escalated_count`, `source_intended_count`, `rag_intended_count`,
+`is_substantive`. Status: `enriched` / `escalated_only` / `unchanged` / `page_deleted` / `error`
+— rolled up in the Dashboard (§9.8.2).
 
-**Telemetry** — every page emits a `sd_service.enrich_page` OTel span with attributes
-`page_kind`, `gap_count`, `filled_count`, `escalated_count`, `source_intended_count`,
-`rag_intended_count`, `is_substantive`. Status: `enriched` / `escalated_only` / `unchanged` /
-`page_deleted` / `error`. The Dashboard panels (§9.8.4) aggregate these into the
-"pages enriched / unchanged / escalated-only / new pages stubbed" KPIs.
+**Query mode.** Delegates to `RAG_MCP.retrieve(query, domain_filter=sd, mode=query)`. On
+`low_confidence` / `exhausted` a focused `analyze_code` runs against the file backing the
+closest-matching endpoint; the user always gets an answer back, flagged low-confidence when
+uncertain. Query mode never escalates to an SME.
 
-**Query mode** — delegates to `RAG_MCP.retrieve(query, domain_filter=sd, mode=query)`
-([§9.1.3.1](#9131-autonomous-rag-loop)). On `low_confidence` / `exhausted` a focused
-`analyze_code` runs against the file backing the closest-matching endpoint; the user always
-gets an answer back, flagged low-confidence when uncertain. Query mode never escalates to an
-SME — that's reserved for background builds (§9.5).
-
-**ReAct loop.** The outer reasoner cycles through `{pull_source, analyze_code,
-verify_telemetry, run_tot_dep_graph, resolve_bp_links, write_doc, rag_index, rag_retrieve,
-focused_analyze, compose_answer, escalate, done}`. Background mode is mostly deterministic;
-query mode is more reactive (the reasoner decides whether the RAG response is enough or
-focused-analysis is needed). `escalate` is reachable only from background mode.
+**ReAct loop.** Outer reasoner cycles through `{pull_source, analyze_code, verify_telemetry,
+run_tot_dep_graph, resolve_bp_links, write_doc, rag_index, rag_retrieve, focused_analyze,
+compose_answer, escalate, done}`. Background mode is mostly deterministic; query mode is more
+reactive. `escalate` is reachable only from background mode.
 
 ```mermaid
 %%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
@@ -399,94 +316,58 @@ The internal sub-nodes are documented next.
 
 ##### 9.2.3.1 analyze_code
 
-This node is the workhorse of SD's design. It pulls source files via the **GitHub MCP** and produces a
-structured representation of the service: **endpoints** (Flask `@app.route` decorators extracted with
-Python's `ast` module), **data structures** (`@dataclass` definitions and type-hinted function
-signatures), and **downstream calls** (`requests` HTTP calls and raw `sqlite3` queries). Each endpoint
-also gets a one-paragraph plain-English description from an LLM pass over the function body and
-surrounding comments, so the doc reads like prose rather than an auto-generated stub.
+The workhorse of SD's design. Pulls source files via the **GitHub MCP** and produces a structured
+representation of the service:
 
-In query mode the same node runs on a focused subset of files identified by the router — typically the
-file containing the endpoint the question is about — keeping the prompt small for the local LLM.
+- **endpoints** (Flask routes / Blueprint mounts, extracted with Python's `ast` module),
+- **data structures** (`@dataclass` definitions, type-hinted signatures, Pydantic models),
+- **data stores** (module-level dicts/lists/sets, `SQLAlchemy Table(...)`, raw `CREATE TABLE`
+  strings),
+- **downstream calls** (`requests` HTTP calls and `sqlite3` queries; URLs / table names parsed
+  out, dynamic targets tagged for SME review),
+- **prose** — a one-paragraph LLM-augmented description per endpoint, bounded to ~1k input tokens
+  so prompts stay focused on the local LLM.
 
-**Implementation pipeline.** The node decomposes into five internal sub-steps:
+A full refresh pulls the whole tree; an incremental refresh pulls only files changed since the
+doc-index revision. Files are content-hashed and cached so re-runs over the same revision are
+free. In query mode the same node runs on a focused subset — typically the file backing the
+endpoint the question is about.
 
-1. **`pull_source`** — pulls the target service's tree via the GitHub MCP. A full refresh pulls
-   everything; an incremental refresh pulls only files changed since the doc index's last revision
-   (commit-sha diff). Files are content-hashed and cached so re-runs over the same revision are free.
-2. **`parse_ast`** — parses each `.py` file with the stdlib `ast` module, producing a uniform internal
-   node representation `{kind, name, decorators, args, body_range, source_path}` that downstream
-   sub-steps consume.
-3. **`extract_endpoints`** — walks the AST for Flask `@app.route(path, methods=[...])` decorators and
-   `Blueprint`-mounted routes. Each match produces an `Endpoint` record `{method, path, handler_fn,
-   params, return_type, source_path, line_range}`. Data structures are extracted alongside from
-   `@dataclass` definitions and type-hinted parameter/return annotations.
-4. **`extract_calls`** — pattern-matches outbound calls: HTTP via
-   `requests.{get,post,put,delete,...}(url, ...)` and DB via `sqlite3` — calls of the form
-   `<conn>.execute(sql, ...)` where `<conn>` traces back to a `sqlite3.connect(...)` (directly or
-   through the `shared.db.connect()` helper). Table names parsed from the SQL string and
-   statically-resolvable URLs become the dependency target; the rest are tagged `dynamic` for SME
-   review.
-5. **`llm_augment`** — for each endpoint, sends a structured prompt to the LLM containing the function
-   body, immediately surrounding comments, and the `Call` records that originate from that handler.
-   The prompt asks for a one-paragraph prose description of what the endpoint does and any non-obvious
-   behavior. Bounded to ~1k input tokens per call so prompts stay focused and fit comfortably in the
-   local LLM's context window.
-
-**Output shape.** The node writes a `ServiceAnalysis` blob to graph state, consumed by every downstream
-node in the SD graph (`verify_telemetry`, `ToT dep graph`, `resolve_bp_links`, `write SD doc`):
-
-```text
-{
-  "service": "billing-service",
-  "source_revision": "<commit-sha>",
-  "endpoints":         [{ method, path, handler, params, return_type, source_path, line_range }],
-  "data_structures":   [{ name, fields, kind }],
-  "downstream_calls":  [{ from, kind: http|db, target, dynamic? }],
-  "prose":             { "<endpoint_key>": "<one-paragraph description>" }
-}
-```
+The output `ServiceAnalysis` blob (`{service, source_revision, endpoints, data_structures,
+data_stores, downstream_calls, prose}`) is consumed by every downstream node
+(`verify_telemetry`, `ToT dep graph`, `resolve_bp_links`, `write_doc`).
 
 **Edge cases — tagged, not guessed:**
 
-- **Dynamic routes** — paths or URLs computed at runtime are tagged `dynamic` with the source
-  expression captured; the doc page surfaces them for SME confirmation.
-- **Blueprint registration** — multi-blueprint apps where the URL prefix comes from
-  `register_blueprint(..., url_prefix=...)` are captured best-effort. The ToT dep-graph step uses
-  telemetry to break ties when more than one wiring is plausible.
-- **Partial parse failures** — file-level parse errors are recorded in the analysis metadata; the rest
-  of the run proceeds and the SD page lists the failed files as follow-ups for the next refresh.
+- **Dynamic routes / URLs** — captured with the source expression and surfaced for SME
+  confirmation rather than guessed.
+- **Blueprint registration** — multi-blueprint apps are best-effort; the ToT dep-graph step uses
+  telemetry to break ties.
+- **Partial parse failures** — recorded in the analysis metadata; the rest of the run proceeds
+  and the page lists failed files as follow-ups.
 
 ##### 9.2.3.2 verify_telemetry
 
-When the **Monitoring MCP** is wired in (out of POC scope per [Section 8.5](PROJECT_ARCHITECTURE.md#85-considerations-for-the-poc)), this node
-cross-checks
-`analyze_code`'s output against observed traffic. For each inferred endpoint, it queries the MCP for
-spans and metrics matching the route — endpoints with no telemetry get flagged as candidates for
-deprecation. For each inferred downstream call, it verifies that traces actually show calls to the named
-target; calls that appear in code but not in telemetry are suspicious, and the reverse case (telemetry
-shows something the code analysis missed) is also surfaced.
-
-Each endpoint and dependency gets a confidence score based on telemetry agreement, which feeds into the
-ToT evaluator below. The node is a no-op when the Monitoring MCP is unavailable — confidence collapses to
-"code-only".
+When the **Monitoring MCP** is wired in (out of POC scope per
+[§8.5](PROJECT_ARCHITECTURE.md#85-considerations-for-the-poc)), this node cross-checks
+`analyze_code`'s output against observed traffic. Endpoints with no telemetry get flagged for
+deprecation; downstream calls that appear in code but not in traces are suspicious, and the
+reverse case (telemetry shows what code analysis missed) is also surfaced. Each endpoint and
+dependency receives a confidence score that feeds the ToT evaluator below. No-op when the
+Monitoring MCP is unavailable — confidence collapses to "code-only".
 
 ##### 9.2.3.3 ToT dep graph
 
-Inferring the dependency graph is non-trivial — call patterns are often ambiguous when calls flow through
-brokers, queues, or service meshes. The steps:
+Inferring the dependency graph is non-trivial — call patterns are often ambiguous when calls flow
+through brokers, queues, or service meshes:
 
-1. **Generate** — emit K=3 candidate dependency graphs per service: one taken straight from code
-   analysis, one reweighted by telemetry agreement (so high-volume but lightly-coded paths get promoted),
-   and one that prefers stable historical traffic over single-trace anomalies.
-2. **Score** — for each candidate, compute the telemetry agreement: the fraction of edges that match
-   observed traffic from the Monitoring MCP, weighted by call volume. Without telemetry, the score
-   collapses to a rubric over code coverage and reference count.
-3. **Prune** — drop candidates with agreement below 0.8.
-4. **Iterate** — beam-search keeps the top B=2–3 surviving candidates and expands variants (swap inferred
-   edges, merge near-duplicates) for the next level. Stops at depth D=2–3.
-5. **Persist** — the winning graph becomes the dependency section in the generated SD page; runner-up
-   edges that differ are recorded as follow-up tasks for the next refresh.
+1. **Generate** — K=3 candidate graphs per service: code-only, telemetry-reweighted, stable-history.
+2. **Score** — telemetry-agreement (fraction of edges matching observed traffic, volume-weighted).
+   Without telemetry, falls back to a code-coverage / reference-count rubric.
+3. **Prune & iterate** — drop candidates below 0.8; beam-search keeps top B=2–3, expands variants
+   (swap inferred edges, merge near-duplicates). Stops at depth D=2–3.
+4. **Persist** — winning graph becomes the dependency section of the SD page; runner-up edges
+   that differ are recorded as follow-up tasks.
 
 If no candidate clears the threshold, the highest-scoring graph is kept and flagged for SME review.
 
@@ -494,55 +375,46 @@ If no candidate clears the threshold, the highest-scoring graph is kept and flag
 
 #### 9.3.1 Responsibilities
 
-The B&P agent owns the **BP pages** in GitHub, the **BP doc index** (per-page metadata, including
-the page's content hash, an SD-side `side_info_revision` snapshot, and any `answered_sme_blocks`
-preserved from prior refreshes), and the **BP sources inventory** (in the enrich-existing flow,
-this tracks the BP page hashes themselves rather than separate input docs). It iterates over
-the existing BP pages, fills detected gaps using SD context (via `SD_MCP`) and RAG retrieval,
-escalates unresolvable gaps as `SME-PLACEHOLDER` blocks, and discovers new pages from SD's
-`referenced_products`. Every page it produces or updates needs to **resolve into the SD
-documentation** so a B&P page about a product links to the services that implement it. It does
-*not* embed or chunk anything itself, write into SD pages, or read source code directly —
-retrieval and indexing go through `RAG_MCP`, and SD pages are reached via `SD_MCP`.
+Owner of the **BP pages** in GitHub, the **BP doc index** (per-page metadata: content hash, an
+SD-side `side_info_revision` snapshot, and `answered_sme_blocks`), and the **BP sources
+inventory** (in the enrich-existing flow, page hashes themselves rather than separate input
+docs). Iterates over existing BP pages, fills detected gaps using SD context (via `SD_MCP`) and
+RAG retrieval, escalates unresolvable gaps as `SME-PLACEHOLDER` blocks, and discovers new pages
+from SD's `referenced_products`. Every page must **resolve into the SD documentation** so a BP
+page about a product links to the services that implement it. Retrieval and indexing go through
+`RAG_MCP`; SD pages are reached only via `SD_MCP`.
 
 #### 9.3.2 APIs (MCP)
 
 Methods exposed by `BP_MCP`:
 
 - `dispatch_query(query, domain_hint, context) -> { status, answer, sources, retrieval_trail }` —
-  query-mode entry point. The Orchestrator calls this with the user's question; B&P delegates to
-  `RAG_MCP.retrieve` with `domain_filter=bp`/`both`, runs `resolve_sd_links` on referenced
-  services in the response, and returns the composed answer with inline cross-reference links.
+  query-mode entry point. Delegates to `RAG_MCP.retrieve`, runs `resolve_sd_links` on referenced
+  services, returns the composed answer with inline cross-reference links.
 - `dispatch_refresh(event) -> { affected_pages, escalations }` — background-mode entry point.
-  The Orchestrator calls this with `(page_uri or empty, change_kind, force)`. B&P iterates over
-  every existing BP page (the `documentation/bp/` tree), runs the enrichment pipeline per page
-  (gap-detect → fill → merge → re-index), and discovers new pages from SD's `referenced_products`.
-  Returns the list of affected pages plus any escalation envelopes. `force=true` bypasses the
-  per-page skip-unchanged check.
+  Iterates the `documentation/bp/` tree, runs the per-page enrichment pipeline (gap-detect →
+  fill → merge → re-index), discovers new pages from SD's `referenced_products`. `force=true`
+  bypasses skip-unchanged.
 - `find_products_for_service(service_id) -> [{ product, feature, role }]` — relational
-  cross-reference, called by SD during `resolve_bp_links`. Reads from B&P's `doc_index` only.
-- `get_page(page_uri) -> { content, doc_index_entry }` — read a B&P page's current content and
-  metadata.
-- `patch_page(page_uri, question_id, replacement) -> { commit_sha }` — replace the fenced
-  `SME-PLACEHOLDER:question_id` block with the resolved text wrapped in a `SME-ANSWERED:question_id`
-  fence. The wrapping is what lets the next refresh detect and preserve the answered prose
-  verbatim instead of overwriting it. Updates `open_placeholders` and `answered_sme_blocks` in
-  the B&P `doc_index` and triggers `RAG_MCP.index`.
+  cross-reference, called by SD during `resolve_bp_links`. `doc_index` only.
+- `get_page(page_uri) -> { content, doc_index_entry }` — read current page + metadata.
+- `patch_page(page_uri, question_id, replacement) -> { commit_sha }` — replace
+  `SME-PLACEHOLDER:question_id` with the resolved text wrapped in a matching
+  `SME-ANSWERED:question_id` fence; updates `open_placeholders` / `answered_sme_blocks` and
+  triggers `RAG_MCP.index`.
 - `ingest_sme_doc(question_id, sme_text, originating_pages) -> { new_page_uri, embedding_revision }` —
-  turn an SME reply into a new B&P page. Called only by the Orchestrator's `ingest_sme_reply`.
-  Writes the new page to GitHub, calls `RAG_MCP.index(domain=bp, ...)`, and returns the new page's
-  URI for use in subsequent `patch_page` calls across both B&P and SD originating pages.
+  turn an SME reply into a new BP page, called only by the Orchestrator's `ingest_sme_reply`.
+  Writes to GitHub, calls `RAG_MCP.index(domain=bp, ...)`, returns the new page URI for
+  subsequent `patch_page` calls.
 
 #### 9.3.3 Implementation details
 
-The B&P agent is a LangGraph state graph fronted by `BP_MCP`. Two operating modes share the
-same state — **background** (refresh) and **query** — and the same SD cross-reference
-summary feeds both, so live answers stay consistent with the last refresh.
+One LangGraph state graph fronted by `BP_MCP`. Background and query modes share the same SD
+cross-reference summary so live answers stay consistent with the last refresh.
 
-**Background mode — `dispatch_refresh`** iterates the union of *existing BP pages* (read
-from `documentation/bp/`) and *products discovered in SD's doc-index* (`referenced_products`
-across every SD page). Existing pages take the enrich-existing path; products without a
-page yet get a minimal stub written, then picked up by the next refresh.
+**Background — `dispatch_refresh`** iterates the union of *existing BP pages* and *products
+discovered in SD's doc-index* (`referenced_products`). Existing pages take the enrich path;
+products without a page get a minimal stub written, picked up by the next refresh.
 
 ```mermaid
 flowchart TD
@@ -563,7 +435,7 @@ flowchart TD
     class Start,Done boundary
 ```
 
-**Per-page enrich-existing flow:**
+**Per-page enrich flow:**
 
 ```mermaid
 flowchart TB
@@ -609,63 +481,40 @@ flowchart TB
 | `strategy`      | Overview · Goals · Approach · Risks · Open Questions |
 | `other`         | Overview · Details · Open Questions |
 
-**Gap criteria** — a section is a gap iff one of: heading is missing; body is empty; body is
-a boilerplate marker (`TBD` / `TODO` / `FIXME` / `WIP` / `N/A` / "to be filled" / "add
-details" / "placeholder"); body contains a `SME-PLACEHOLDER` fence. **Subjective judgments
-("could be more detailed") are explicitly NOT gap criteria.** As defence-in-depth,
-`compose.merge_into_existing` runs `_section_body_is_fillable` before overwriting any
-matched heading; substantive prose is never replaced even when the detector mis-flags it.
+**Gap criteria** match SD ([§9.2.3](#923-implementation-details)) — heading missing / body empty /
+boilerplate marker / `SME-PLACEHOLDER` fence. Subjective judgments are NOT gap criteria. The same
+fillable-body safety check applies in `merge_into_existing`.
 
 **Fill strategies** (one per gap, picked by the detector):
 
-* **`sd-mcp`** — answer is in the SD doc-index summary (`Integrations`, service-list
-  sections). Composed by a prose-LLM (`get_chat_llm(module="bp.enrich.compose",
-  json_mode=False)`) from the SD summary JSON; no RAG retrieve. The prose LLM is
-  system-prompted to refuse fabrication — if the summary doesn't cover the section it
-  appends `(further detail TBD — not in SD cross-reference)` rather than inventing services.
-  Falls through to RAG on prose-LLM error so a single hiccup doesn't stall the refresh.
+* **`sd-mcp`** — answer is in the SD doc-index summary (`Integrations`, service-list sections).
+  Composed by a prose-LLM from the SD summary JSON; no RAG retrieve. The prose LLM is
+  system-prompted to refuse fabrication — if the summary doesn't cover the section it appends
+  `(further detail TBD — not in SD cross-reference)`. Falls through to RAG on prose-LLM error.
 * **`rag`** — needs prose context not in the SD index. Auto-RAG retrieve (§9.1.3.1) with
   `domain_filter=both` + the SD summary appended as a context hint. `low_confidence` /
   `exhausted` → SME-PLACEHOLDER (§9.5).
 
-**Skip-unchanged + ordering:**
+**Skip & ordering.** Per-page skip iff `(page_hash, side_info_revision)` both match prior refresh
+— `side_info_revision` hashes the SD doc-index summary, so an SD change re-enriches even when BP
+page bytes didn't move. `force=true` bypasses both. SD's `dispatch_refresh` runs to completion
+before BP's. New-page stubs are written before the next refresh's enrich pass — the enrichment
+LLM never sees a half-written page from the same run.
 
-* Per-page skip iff `(page_hash, side_info_revision)` both match the prior refresh.
-  `side_info_revision` hashes the SD doc-index summary, so an SD change re-enriches even
-  when the BP page bytes didn't change.
-* `force=true` (operator override from the portal) bypasses both checks.
-* The orchestrator runs **SD's `dispatch_refresh` to completion before BP's**, so BP's
-  `_collect_sd_summary()` and `resolve_sd_links()` see the freshly-written SD doc-index.
-* New-page stubs are written before the next refresh's enrich pass, never inline — the
-  enrichment LLM never sees a half-written page from the same run.
+**SME continuity, telemetry, query mode** mirror SD ([§9.2.3](#923-implementation-details)) with
+the BP equivalents (`bp_service.enrich_page` span, `domain_filter=bp` for query mode).
+Cross-domain queries pass `domain_filter=both` so the response sees BP and SD chunks together
+without a merge step. When the response references a service, `resolve_sd_links` resolves the
+reference at answer time so the user sees an up-to-date link even if the persisted page is
+briefly stale.
 
-**SME continuity** — `<!-- SME-ANSWERED:question_id ... -->` fences inside a page body are
-detected pre-enrichment and reused verbatim instead of re-asking. Doc-index
-`answered_sme_blocks` carries them across refreshes as a second line of defence.
+**Cross-domain isolation.** B&P calls SD MCP for "what services serve this product"; SD calls
+B&P MCP for the reverse. The two services do not write into each other's pages.
 
-**Telemetry** — every page emits a `bp_service.enrich_page` OTel span with attributes
-`page_kind`, `gap_count`, `filled_count`, `escalated_count`, `sd_intended_count`,
-`rag_intended_count`, `is_substantive`. Status: `enriched` / `escalated_only` / `unchanged` /
-`stub_created` / `page_deleted` / `error`. The Dashboard panels (§9.8.4) aggregate these
-into the "pages enriched / unchanged / escalated-only / new pages stubbed" KPIs.
-
-**Query mode** — delegates to `RAG_MCP.retrieve(query, domain_filter=bp, mode=query)`
-([§9.1.3.1](#9131-autonomous-rag-loop)). Cross-domain queries pass
-`domain_filter=both`, so the response sees BP and SD chunks together without any merge
-step on B&P's side. When the response references a service, the same `resolve_sd_links`
-node resolves the reference at answer time, so the user sees an up-to-date link even if
-the persisted page is briefly stale. On `low_confidence` / `exhausted` the user gets a
-low-confidence answer with closest-match citations — query mode never escalates to an SME
-(that's reserved for background builds, §9.5).
-
-**Cross-domain isolation** — B&P calls **SD MCP** to resolve "what services serve this
-product"; SD calls **B&P MCP** to resolve "what products depend on this service". The two
-services do not write into each other's pages — they just link.
-
-**ReAct loop.** The outer reasoner cycles through `{ingest_input_docs, rag_index,
-resolve_sd_links, write_bp_doc, rag_retrieve, compose_answer, escalate, done}`. Background
-mode is mostly deterministic; query mode hands off to `rag_retrieve` and composes the
-answer around the RAG response. `escalate` is reachable only from background mode.
+**ReAct loop.** Outer reasoner cycles through `{ingest_input_docs, rag_index, resolve_sd_links,
+write_bp_doc, rag_retrieve, compose_answer, escalate, done}`. Background mode is mostly
+deterministic; query mode hands off to `rag_retrieve`. `escalate` is reachable only from
+background mode.
 
 ```mermaid
 %%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
@@ -689,156 +538,113 @@ class Trig,Port,Done,Out portal
 
 #### 9.4.1 Responsibilities
 
-The Orchestrator is the supervisor: it receives work from the Documentation Portal and the Update
-Trigger, routes it to the right specialist, manages the SME-question queue, and persists task
-state. It does *no* content analysis itself, has no embedding store, no doc index, and no sources
-inventory — all per-domain state is owned by the specialists. The only state it owns is the
-**`pending_sme_questions`** queue plus the SME / specialist registry.
+The supervisor: receives work from the Documentation Portal and the Update Trigger, routes it to
+the right specialist, manages the SME-question queue, and persists task state. No content
+analysis, no embedding store, no doc index, no sources inventory — all per-domain state is owned
+by the specialists. The only state it owns is the **`pending_sme_questions`** queue plus the
+SME / specialist registry.
 
 #### 9.4.2 APIs (REST)
 
-The Orchestrator's upstream callers (the Documentation Portal and the Update Trigger) are not
-LLM-driven agents, so the Orchestrator exposes a plain **HTTP/REST API** rather than an MCP. The
-Orchestrator continues to *call* MCP downstream (`BP_MCP`, `SD_MCP`); the asymmetry is fine — MCP
-for agent-to-agent, REST for system integration.
+Upstream callers (Portal, Update Trigger) are not LLM-driven, so the Orchestrator exposes
+**HTTP/REST** rather than an MCP. It still *calls* MCP downstream — the asymmetry is intentional
+(MCP for agent-to-agent, REST for system integration).
 
 REST endpoints (versioned under `/v1`):
 
-- `POST /v1/queries` — body: `{ query, user_id, context }`. Used by the Portal chatbot. The
-  Orchestrator picks B&P, SD, or both based on the query, dispatches via the corresponding MCP,
-  and returns `{ status, answer, sources, retrieval_trail }`. Synchronous; bounded by the
-  underlying RAG loop's R=2 rewrites.
+- `POST /v1/queries` — body: `{ query, user_id, context }`. Picks B&P, SD, or both based on the
+  query, dispatches via the corresponding MCP, returns `{ status, answer, sources,
+  retrieval_trail }`. Synchronous; bounded by Auto-RAG's R=2.
 - `POST /v1/refresh` — body: `{ event_type, doc_id_or_commit_sha, change_kind, source }`. Used by
   the Update Trigger (cron + GitHub webhook + Portal "refresh" button). Returns
-  `{ task_id, accepted_at }`. Asynchronous — the Orchestrator queues the work and fans out to the
-  affected specialists.
-- `POST /v1/sme-replies` — body: `{ question_id, sme_id, sme_text }`. Used by the Portal's SME
-  answer UI. The Orchestrator runs `ingest_sme_reply` (persist new B&P doc → patch every
-  originating page → trigger re-indexing → clear queue entry) and returns
+  `{ task_id, accepted_at }`. Asynchronous fan-out.
+- `POST /v1/sme-replies` — body: `{ question_id, sme_id, sme_text }`. Runs `ingest_sme_reply`
+  (persist new B&P doc → patch every originating page → re-index → clear queue entry) and returns
   `{ status, new_doc_uri, patched_pages }`.
-- `GET /v1/sme-questions?sme_id=...&status=pending` — Used by the Portal's SME UI to list pending
-  questions for a given SME. Returns `[{ question_id, topic, question, best_guess,
-  originating_pages, posted_at }]`.
-- `GET /v1/sme-questions/{question_id}` — full detail for one queued question, including the
-  retrieval trail.
-- `GET /v1/tasks/{task_id}` — poll status of an async task (e.g., a refresh fan-out). Returns
-  `{ status, started_at, completed_at, result }`.
-- `GET /v1/health` — liveness check for the Update Trigger and any external monitoring.
+- `GET /v1/sme-questions?sme_id=...&status=pending` — list pending questions for an SME.
+- `GET /v1/sme-questions/{question_id}` — full detail incl. retrieval trail.
+- `GET /v1/tasks/{task_id}` — poll an async task.
+- `GET /v1/health` — liveness check.
 
-Two additional endpoints colocated under `/v1/` are added by [§9.8 Documentation Portal](#98-documentation-portal) for its Multi-Agents X-Ray drawer and Dashboard tab:
+Two more endpoints colocated under `/v1/` are added by [§9.8](#98-documentation-portal) for the
+Multi-Agents X-Ray drawer and the Dashboard:
 
-- `GET /v1/streams/events?since_service_id=...&since_llm_id=...&module_prefix=...` — server-sent
-  events; merged tail of both the `service_logs` and `llm_calls` tables at `$AUDIT_DB_PATH`. Each
-  event is one JSON object carrying a `kind: "service" | "llm"` discriminator plus the row
-  columns; service rows contribute `{kind, id, module, level, timestamp, message}` and LLM rows
-  contribute `{kind, id, module, timestamp, started_at, latency_ms, model, request, response,
-  error, ...}`. The SSE id field is composite (`s:N` / `l:N`) so the browser's `EventSource`
-  resumes from the right cursor on reconnect. Cursors are independent per source table.
-- `GET /v1/metrics?service=...&since=...&until=...` — synchronous passthrough to the OTel
-  `get_metrics` tool ([§9.6](#96-audit-and-observability-module-6)); the portal's Dashboard
-  tab polls this on a 5s interval. Reads the OTel SQLite store directly since the orchestrator
-  has the same in-process access as the OTel MCP server.
+- `GET /v1/streams/events` — server-sent events; merged tail of `service_logs` and `llm_calls` at
+  `$AUDIT_DB_PATH`. Each event carries a `kind: "service" | "llm"` discriminator. The SSE id is
+  composite (`s:N` / `l:N`) so the browser's `EventSource` resumes from the right cursor on
+  reconnect.
+- `GET /v1/metrics?service=...&since=...&until=...` — passthrough to OTel `get_metrics`
+  ([§9.6](#96-audit-and-observability-module-6)) plus an `llm` section sourced from the
+  `llm_calls` audit table; the Dashboard polls this on a 5s interval.
 
 Auth and rate-limiting are out of POC scope but the endpoints are designed so adding them is a
-middleware change, not a contract change. The Portal authenticates with a simple API key for the
-POC; production deployments would swap to whatever the org's standard service auth is.
+middleware change, not a contract change.
 
 #### 9.4.3 Implementation details
 
-The Orchestrator is one **LangGraph** state graph that runs a plain **ReAct** loop. Same harness
-style as B&P and SD, with fewer nodes since there is no domain-specific reasoning.
+One LangGraph state graph running a plain **ReAct** loop — same harness style as B&P and SD,
+with fewer nodes since there's no domain-specific reasoning.
 
-*Inputs.* Three event types feed the orchestrator (mapped from the REST endpoints above):
+**Inputs.** Three event types map to the REST endpoints above:
 
-- **Portal query** (`POST /v1/queries`) — a user (or SME) question or improvement proposal. The
-  orchestrator picks B&P, SD, or both based on the query, and the dispatch envelope carries a
-  `domain_hint` that the specialist forwards to `RAG_MCP.retrieve` as `domain_filter`. Specialists
-  never escalate query-mode work to an SME — a low-confidence answer comes straight back to the
-  Portal.
-- **Trigger refresh** (`POST /v1/refresh`) — `(doc_id or commit_sha, change_kind)` events from the
-  Update Trigger. The orchestrator routes each event to the specialist(s) it concerns based on
-  its path/kind (a small static rule, not a stored index). Each specialist computes its own
-  affected pages by diffing the event against its sources inventory and re-runs its pipeline
-  (calling `RAG_MCP.index` for each affected document). Background-mode dispatches are the only
-  source of SME escalations.
-- **SME reply** (`POST /v1/sme-replies`) — answers received via the Portal that need to land as a
-  new B&P document and patched back into every page that carried the matching placeholder.
+- **Portal query** — picks B&P, SD, or both. Specialists never escalate query-mode work to an SME.
+- **Trigger refresh** — routes each event to affected specialist(s) based on path/kind (small
+  static rule, not a stored index). Background-mode dispatches are the only source of SME
+  escalations.
+- **SME reply** — lands as a new B&P document and patches every page that carried the matching
+  placeholder.
 
-*State.* A single persisted blob survives between runs:
+**State.** Only `pending_sme_questions` survives between runs, keyed by `question_id` with
+`{topic, question, originating_pages, placeholder_id, best_guess, retrieval_trail,
+assigned_sme, posted_at}`. `originating_pages` is the set of pages carrying the matching
+placeholder — re-integration patches every one of them, not just the newest. The doc index and
+sources inventory are *not* held here; the orchestrator asks the owning specialist via its MCP
+when it needs them.
 
-- **`pending_sme_questions`** — escalated questions waiting for an SME, keyed by `question_id`,
-  with `{topic, question, originating_pages, placeholder_id, best_guess, retrieval_trail,
-  assigned_sme, posted_at}`. `originating_pages` is the set of B&P/SD page URIs that carry the
-  matching placeholder, so re-integration patches every page that asked the same question — not
-  just the newest one. This is the only piece of state the orchestrator owns; it is genuinely
-  cross-cutting because dedup happens across both domains and the SME registry is global.
+**ReAct loop.** Three nodes — `reason` (local LLM picks next action from `{dispatch_to_bp,
+dispatch_to_sd, dispatch_to_both, ingest_sme_reply, ack_completion, done}`) → `act` → `observe`.
+Conditional edge loops back until the action returns `done`. Tight system prompt (~300 tokens)
+and a small action space keep it reliable on the local LLM.
 
-The **doc index** and **sources inventory** are *not* held by the orchestrator. Each specialist
-owns its own copy keyed to its domain (see
-[§8.1](PROJECT_ARCHITECTURE.md#81-roles-and-responsibilities)). The orchestrator can ask a
-specialist for that information via its MCP when it needs it (e.g., the placeholder-patch step
-queries the owning specialist for the page's current content), but it never caches a global view.
+**Pipeline nodes wrapped by the loop:**
 
-*ReAct loop.* The outer loop is a 3-node ReAct cycle: `reason` (the local LLM picks the next
-action from `{dispatch_to_bp, dispatch_to_sd, dispatch_to_both, ingest_sme_reply, ack_completion,
-done}` based on the inbound event and current state) → `act` (calls the chosen MCP or internal
-node) → `observe` (writes the response back into graph state). A conditional edge loops back to
-`reason` until the action returns `done`. The system prompt is kept tight (~300 tokens) and the
-action space small so the loop runs reliably on the local LLM.
+1. **`route`** — classifies the inbound event into `{portal_query, trigger_refresh, sme_reply}`.
+2. **`dispatch`** — forwards refreshes to the right specialist; for queries, picks a single
+   specialist or fans out to both.
+3. **`ingest_sme_reply`** — re-integration ([§9.5.1](#951-placeholders-and-re-integration)).
+   Persists the SME's answer as a new BP doc via `BP_MCP.ingest_sme_doc`, walks
+   `originating_pages` asking each owning specialist to patch its page (placeholder block →
+   SME's text + link to the new doc), tells BP to re-index, removes the entry from
+   `pending_sme_questions`. The patching specialist updates its own `open_placeholders`.
+4. **`ack_completion`** — marks the in-flight task complete; if the response is a background-mode
+   escalation envelope, opens or updates the corresponding `pending_sme_questions` entry.
+   Query-mode responses never carry an escalation envelope.
 
-*Pipeline nodes wrapped by the ReAct loop:*
-
-1. **`route`** — classifies the inbound event into `{portal_query, trigger_refresh, sme_reply}`
-   based on which REST endpoint received the request. Used by `reason` as the first decision
-   point.
-2. **`dispatch`** — for refresh tasks, forwards the change event to the right specialist's MCP;
-   the specialist returns the list of affected pages it plans to refresh (or `[]` if the event is
-   irrelevant to it). For Portal queries, picks a single specialist (or both, if the query spans
-   both domains) and forwards.
-3. **`ingest_sme_reply`** — the re-integration step
-   ([Section 9.5.1](#951-placeholders-and-re-integration)). Persists the SME's answer as a new
-   B&P document via `BP_MCP.ingest_sme_doc`, then walks
-   `pending_sme_questions[question_id].originating_pages` and asks the owning specialist to
-   **patch each page** by replacing the placeholder block with the SME's text plus a link to the
-   new doc. Tells B&P to re-index. The patching specialist updates its own `open_placeholders` in
-   its doc index; the orchestrator just removes the entry from `pending_sme_questions`.
-4. **`ack_completion`** — when a specialist finishes a refresh task or a query response, this
-   node marks the in-flight task complete in the orchestrator's working state. If the response is
-   a background-mode escalation envelope (specialist hit a gap and wrote a placeholder block into
-   the page it was building), the node opens or updates the corresponding entry in
-   `pending_sme_questions`. Query-mode responses never carry an escalation envelope. The
-   specialist itself records the new page in its own doc index — the orchestrator no longer
-   maintains a parallel copy.
-
-*Resumability.* Every node persists its state before transitioning; if the orchestrator crashes
-mid-refresh it picks up where it left off on next start. Refresh fan-outs run specialists in
-parallel but preserve ordering per page so cross-references stay consistent within a single cycle.
+**Resumability.** Every node persists state before transitioning; a mid-refresh crash picks up on
+next start. Refresh fan-outs run specialists in parallel but preserve per-page ordering so
+cross-references stay consistent within a cycle.
 
 ### 9.5 SME interaction (Module 6)
 
-When a specialist hits an unresolvable gap during a **background page build** — Auto-RAG exhausts its
-rewrite budget on a sub-question necessary for the page, code analysis tags a route as `dynamic`, the
-ToT dep-graph evaluator can't pick a winner, or a cross-reference can't be resolved — it escalates the
-question to a **subject matter expert** through the **Documentation Portal**
-([Section 8](PROJECT_ARCHITECTURE.md#8-high-level-architecture-module-5)). Query-mode answers never escalate; the user gets a
-low-confidence answer with closest-match citations and the gap is filled the next time a background
-build surfaces the same question. The goal is to enrich the knowledge base over time, not to block
-either the user or the page commit.
+When a specialist hits an unresolvable gap during a **background page build** — Auto-RAG exhausts
+its rewrite budget on a critical sub-question, code analysis tags a route as `dynamic`, the ToT
+dep-graph evaluator can't pick a winner, or a cross-reference can't be resolved — it escalates
+to a **subject matter expert** through the **Documentation Portal**. Query-mode answers never
+escalate; the user gets a low-confidence answer and the gap is filled the next time a background
+build surfaces it. The goal is to enrich the knowledge base over time, not to block either the
+user or the page commit.
 
 The flow is async:
 
-1. The specialist commits the page with a **placeholder block** standing in for the missing prose or
-   link ([Section 9.5.1](#951-placeholders-and-re-integration)) and returns an **escalation envelope**
-   to the orchestrator carrying `question_id`, `placeholder_id`, the originating page URI, the
-   retrieval/analysis trail, and the agent's best low-confidence guess so the SME can confirm or
-   correct rather than draft from scratch.
-2. The orchestrator queues the question (`pending_sme_questions` in its inventory, keyed by
-   `question_id`) with the originating page list, dedupes by topic so two pages hitting the same gap
-   don't both page the SME, and surfaces it to the right SME through the Portal.
-3. When the SME replies, the orchestrator runs `ingest_sme_reply`
-   ([Section 9.4](#94-orchestrator-service-design)): it persists the reply as a new B&P document,
-   asks the owning specialist to patch every originating page (placeholder block → SME's text + link
-   to the new doc), triggers re-indexing, and clears the queue entry.
+1. The specialist commits the page with a **placeholder block**
+   ([§9.5.1](#951-placeholders-and-re-integration)) and returns an **escalation envelope** to
+   the orchestrator carrying `question_id`, `placeholder_id`, the originating page URI, the
+   retrieval/analysis trail, and the agent's best low-confidence guess.
+2. The orchestrator queues the question in `pending_sme_questions`, dedupes by topic so two
+   pages hitting the same gap don't double-page the SME, and surfaces it through the Portal.
+3. When the SME replies, `ingest_sme_reply` ([§9.4](#94-orchestrator-service-design)) persists
+   the reply as a new BP document, asks the owning specialist to patch every originating page,
+   triggers re-indexing, and clears the queue entry.
 
 ```mermaid
 sequenceDiagram
@@ -866,46 +672,33 @@ sequenceDiagram
     Note over Trig, SME: Future queries on the same topic<br/>now hit an enriched, grounded retrieval<br/>and the page no longer shows a gap
 ```
 
-The Portal looks up the right SME from a registry keyed by project/domain (the "initial list of SMEs"
-from [Section 3.1](PROJECT.md#31-business--product-bp-pov)), with fallback to the next candidate after
-a timeout (e.g., 24h). The same flow is used by **SD** when its ToT gap-reconciliation evaluator can't
-pick a winner ([Section 7.7](PROJECT.md#77-risk-and-mitigation)'s mitigation).
-
-If the SME's reply disagrees with the retrieved documents, those documents are flagged for refresh —
-the SME-driven counterpart of the index-quality feedback in
-[Section 9.1.3.1](#9131-autonomous-rag-loop). If no SME is available for a domain, the
-orchestrator records the gap in its inventory; it is a knowledge-base coverage problem, not a runtime
+The Portal looks up the right SME from a registry keyed by project/domain, with fallback to the
+next candidate after a timeout (e.g., 24h). If the SME's reply disagrees with the retrieved
+documents, those documents are flagged for refresh — the SME-driven counterpart of the
+index-quality feedback in [§9.1.3.1](#9131-autonomous-rag-loop). If no SME is available for a
+domain, the orchestrator records the gap; it's a knowledge-base coverage problem, not a runtime
 error.
 
 #### 9.5.1 Placeholders and re-integration
 
-A page is rarely held back because of a single open question — the specialist commits what it knows and
-**marks the gap inline** so readers see where the documentation is incomplete and the system has a hook to patch
-the page once an SME answers. Two mechanisms cover this: a **placeholder block** written into the page at gap
-time, and a **re-integration step** in the orchestrator that replaces the block when the SME's reply lands.
+The specialist commits what it knows and **marks the gap inline** so readers see where the
+documentation is incomplete and the system has a hook to patch the page once an SME answers.
+Two mechanisms cover this: a **placeholder block** in the page, and a **re-integration step** in
+the orchestrator that replaces it.
 
-**When a placeholder is written.** A placeholder block is emitted whenever a specialist hits a gap it cannot
-resolve on its own during a background page build and the resulting question is escalated to an SME via
-[Section 9.5](#95-sme-interaction-module-6). The common cases:
+**When written.** A placeholder is emitted whenever a specialist escalates during a background
+build:
 
-- **Background-mode RAG retrieval** — while building or refreshing a page, the specialist calls
-  `RAG_MCP.retrieve(query, domain_filter, mode=background)` ([Section 9.1.3.1](#9131-autonomous-rag-loop))
-  for a sub-question necessary for the page (B&P over its input docs, SD over the SD slice — both
-  may widen the filter to cross-domain when the question warrants). The RAG Service exhausts its
-  rewrite budget and returns `status=exhausted` (or `low_confidence` on a question critical for the
-  page, e.g., the canonical owner of a feature flag or the product context for an SD endpoint).
-  Query-mode `RAG_MCP.retrieve` returns the same statuses but the specialist treats them as a
-  low-confidence answer to the user instead — no placeholder is written.
-- **SD code-analysis gaps** — `analyze_code` tags a route or call as `dynamic` ([Section 9.2.3.1](#9231-analyze_code))
-  or the ToT dep-graph evaluator can't pick a winner ([Section 9.2.3.3](#9233-tot-dep-graph)).
-- **Cross-reference resolution** — `resolve_sd_links` / `resolve_bp_links` can't map a referent and the link
-  would otherwise rot silently.
+- **Background-mode RAG retrieval** returns `low_confidence` / `exhausted` on a sub-question
+  critical for the page. Query-mode statuses don't trigger placeholders — they become
+  low-confidence answers to the user.
+- **SD code-analysis gaps** — `analyze_code` tags a route as `dynamic`
+  ([§9.2.3.1](#9231-analyze_code)) or the ToT dep-graph evaluator can't pick a winner
+  ([§9.2.3.3](#9233-tot-dep-graph)).
+- **Cross-reference resolution** — `resolve_sd_links` / `resolve_bp_links` can't map a referent.
 
-In all three cases the specialist still writes the page; the placeholder block stands in for the missing prose
-or link.
-
-**Placeholder block format.** A self-contained, machine-locatable Markdown block with HTML-comment fences so
-the patch step can find and replace it deterministically without regex over arbitrary prose:
+**Placeholder block format.** Self-contained Markdown with HTML-comment fences so the patch step
+finds and replaces it deterministically (no regex over arbitrary prose):
 
 ```markdown
 <!-- SME-PLACEHOLDER:Q-2026-06-17-001 START -->
@@ -917,244 +710,180 @@ the patch step can find and replace it deterministically without regex over arbi
 <!-- SME-PLACEHOLDER:Q-2026-06-17-001 END -->
 ```
 
-The fenced HTML comments are the contract. Everything between them is human-readable; the `question_id` in the
-fence is what the orchestrator uses to find the block. The page's `open_placeholders` list in the owning
-specialist's `doc_index` mirrors the set of `question_id`s currently fenced inside the file; the orchestrator
-finds every page that asked the same question via its own `pending_sme_questions[question_id].originating_pages`,
-without scanning the repo and without keeping a parallel index of its own.
+The fenced HTML comments are the contract. The `question_id` is what the orchestrator uses to
+find the block. Each page's `open_placeholders` mirrors the set of `question_id`s currently
+fenced; the orchestrator finds every page that asked the same question via
+`pending_sme_questions[question_id].originating_pages` — no repo scan, no parallel index.
 
-**Re-integration when the SME replies.** The orchestrator's `ingest_sme_reply` node
-([Section 9.4](#94-orchestrator-service-design)) does two writes in order:
+**Re-integration.** `ingest_sme_reply` does two writes in order:
 
-1. **New B&P document** — the SME's answer is persisted as a standalone B&P page so the Auto-RAG loop can
-   retrieve it on future queries on the same topic. This is the embedding-side update; without it, the next
-   identical question would re-escalate.
-2. **Patch every originating page** — for each URI in `pending_sme_questions[question_id].originating_pages`,
-   the orchestrator asks the owning specialist (B&P or SD) to replace the fenced placeholder block with the
-   SME's text plus a relative Markdown link to the new B&P document. This is the page-side update; without it,
-   the placeholder rots in the page even though the answer exists.
+1. **New BP document** — the SME's answer is persisted as a standalone BP page so Auto-RAG can
+   retrieve it on future queries (the embedding-side update; without it, the next identical
+   question would re-escalate).
+2. **Patch every originating page** — for each URI in `originating_pages`, the orchestrator asks
+   the owning specialist to replace the fenced placeholder with the SME's text plus a relative
+   Markdown link to the new BP doc.
 
-Both writes are committed in the same Git change so the index update and the page patch land together. After
-the patch, the `question_id` is removed from each page's `open_placeholders` and the entry is cleared from
-`pending_sme_questions`. If a downstream refresh later re-discovers the same gap (e.g., the SME's answer
-became outdated), a new `question_id` is opened and a fresh placeholder block written — the system never
-reuses a closed `question_id`, so the audit trail in Git stays linear.
+Both writes commit in the same Git change. The `question_id` is removed from each page's
+`open_placeholders` and the entry is cleared from `pending_sme_questions`. If a future refresh
+re-discovers the same gap, a fresh `question_id` is opened — closed IDs are never reused, so the
+Git audit trail stays linear.
 
-**Cross-references re-validation.** The same patch step also runs after a refresh that resolves a previously
-missing cross-reference: the placeholder block becomes the resolved relative Markdown link. From the page's
-perspective there's only one mechanism — fenced block in, resolved content out — regardless of whether the
-fix came from an SME or from a successful re-run.
+The same patch step runs when a refresh resolves a previously missing cross-reference: from the
+page's perspective there's only one mechanism — fenced block in, resolved content out —
+regardless of whether the fix came from an SME or a successful re-run.
 
 ### 9.6 Audit and observability (Module 6)
 
-Every service in the architecture emits **OpenTelemetry spans** for inbound and outbound MCP calls
-through `OTEL_MCP` ([Section 8.2](PROJECT_ARCHITECTURE.md#82-high-level-architecture-diagram)). The spans form the runtime
-audit log and the source of every per-node metric the system tracks. Span emission is a
-cross-cutting concern: each `act` step in a service's ReAct loop is wrapped automatically, so the
-per-service designs in [§9.1](#91-rag-service-design)–[§9.4](#94-orchestrator-service-design) don't need to thread it explicitly.
+Every service emits **OpenTelemetry spans** for inbound and outbound MCP calls through `OTEL_MCP`
+([§8.2](PROJECT_ARCHITECTURE.md#82-high-level-architecture-diagram)). The spans are the runtime
+audit log and the source of every per-node metric the system tracks. Span emission is wrapped
+around each `act` step automatically — the per-service designs don't need to thread it
+explicitly.
 
-**Span boundary.** A span opens on every inbound MCP method and on every outbound MCP call. By
-service:
+**Span boundary** — opens on every inbound MCP method and every outbound MCP call:
 
-- **Orchestrator** ([§9.4](#94-orchestrator-service-design)) — inbound: `route`; outbound:
-  `dispatch_to_bp/sd/both`, `ingest_sme_reply`, `ack_completion`.
-- **B&P Service** ([§9.3](#93-bp-service-design)) — inbound: each `BP_MCP` method; outbound:
-  `RAG_MCP.retrieve/index`, `SD_MCP.*`, `GH_MCP.*`.
-- **SD Service** ([§9.2](#92-sd-service-design)) — inbound: each `SD_MCP` method; outbound:
-  `RAG_MCP.*`, `BP_MCP.*`, `GH_MCP.*`, `MON_MCP.*`.
-- **RAG Service** ([§9.1](#91-rag-service-design)) — inbound: `retrieve`, `index`, `delete`;
-  outbound: LLM calls (grader, faithfulness, rewriter, probe), embedding-model calls.
+- **Orchestrator** — inbound: `route`; outbound: `dispatch_to_bp/sd/both`, `ingest_sme_reply`,
+  `ack_completion`.
+- **B&P / SD** — inbound: each MCP method on its own surface; outbound: `RAG_MCP.*`, peer MCP,
+  `GH_MCP.*`, plus `MON_MCP.*` for SD.
+- **RAG Service** — inbound: `retrieve`, `index`, `delete`; outbound: LLM calls (grader,
+  faithfulness, rewriter, probe) and embedding-model calls.
 
-**Span attributes.** Each span carries `mcp.method`, `mcp.domain` (for RAG calls),
-`mcp.status` (e.g., `ok`/`low_confidence`/`exhausted` for RAG retrieve), `mcp.latency_ms`, and
-`mcp.trace_id` propagated through MCP envelopes so a Portal query → Orchestrator → B&P → RAG chain
-shares one end-to-end trace. A `mcp.payload_summary` carries counts, IDs, and status — **not** raw
-queries or document content. Auto-RAG spans add rewrite count, grader scores, answer-re-grade
-pass/fail per axis (faithfulness, answerability), and index-quality flags; ToT spans add branch
-count, depth reached, and winning score.
+**Span attributes.** `mcp.method`, `mcp.domain` (RAG only), `mcp.status`, `mcp.latency_ms`, and
+`mcp.trace_id` propagated end-to-end so a Portal query → Orchestrator → B&P → RAG chain shares
+one trace. A `mcp.payload_summary` carries counts, IDs, and status — **not** raw queries or
+document content. Auto-RAG spans add rewrite count, grader scores, answer-re-grade per axis
+(faithfulness, answerability), and index-quality flags; ToT spans add branch count, depth, and
+winning score.
 
-**Derived metrics.** The trace stream is the source of truth for:
+**Derived metrics.** The trace stream is the source of truth for: escalation rate, grader-fail
+rate, RAG status distribution, latency percentiles per MCP method, ToT branch success rate, and
+the index-quality hit rate ([§9.1.3.1](#9131-autonomous-rag-loop)).
 
-- **Escalation rate** — fraction of background dispatches that emit an escalation envelope.
-- **Grader-fail rate** — fraction of Auto-RAG retrievals that go to rewrite or fall back.
-- **RAG status distribution** — counts of `ok` / `low_confidence` / `exhausted` per domain.
-- **Latency percentiles** — p50 / p95 per MCP method.
-- **ToT branch success rate** — fraction of ToT loops that exit before the depth cap.
-- **Index-quality hit rate** — chunks repeatedly surviving retrieval but failing the grader
-  (re-indexing signal closing the loop with [§9.1.3.1](#9131-autonomous-rag-loop)).
-
-**Privacy.** Raw query text and full document content are NOT captured by default; the collector
-samples them only when explicitly enabled in dev configurations, so the
-[§1.4](PROJECT.md#14-principles-for-our-agent) PII guarantee stays policy-clean even when the
-trace backend is shared infrastructure.
+**Privacy.** Raw query text and document content are NOT captured by default; the collector
+samples them only when explicitly enabled in dev configs.
 
 **Resilience.** Span emission is fire-and-forget — a failure in `OTEL_MCP` never blocks a
-service-to-service call. Spans are buffered locally if the collector is unreachable; the buffer
-is bounded so a sustained outage drops oldest-first rather than stalling agent work.
+service-to-service call. Spans are buffered locally if the collector is unreachable, with a
+bounded buffer that drops oldest-first rather than stalling agent work.
 
 ### 9.7 Evaluation strategy (Module 6)
 
-The [§9.6](#96-audit-and-observability-module-6) trace stream tells us what the agent *did*; this
-section is about whether what it did was *any good*. Two layers: **online metrics** computed live from spans + doc
-indexes (cheap, runs
-continuously) and **offline metrics** that require labeling or sampling (slower, higher signal).
+[§9.6](#96-audit-and-observability-module-6) tells us what the agent *did*; this section is about
+whether it was any good. Two layers: **online metrics** computed live from spans + doc indexes
+(cheap, continuous) and **offline metrics** that require labeling or sampling (slower, higher
+signal).
 
-**Online metrics** — derivable from the OTel trace stream ([§9.6](#96-audit-and-observability-module-6))
-and the per-specialist doc indexes ([§9.5](#94-orchestrator-service-design)) without any external
-labeling:
+**Online metrics** — derivable from the trace stream and per-specialist doc indexes without
+external labeling:
 
-- **Answer re-grade pass rate** — fraction of generated answers that clear the post-generation
-  re-grade ([§9.1.3.1](#9131-autonomous-rag-loop)), tracked per axis: **faithfulness** (drops
-  signal hallucination drift) and **answerability** (drops signal that the loop is generating
-  graceful refusals — usually a retrieval or grader gap).
-- **Escalation rate** — fraction of background dispatches that emit an SME-escalation envelope
-  (already in [§9.6](#96-audit-and-observability-module-6)).
-- **Grader-fail rate** — fraction of Auto-RAG retrievals that fall through to rewrite or fallback
-  (already in [§9.6](#96-audit-and-observability-module-6)).
-- **RAG status distribution** — counts of `ok` / `low_confidence` / `exhausted` per domain (already
-  in [§9.6](#96-audit-and-observability-module-6)). A rising `exhausted` rate on `domain=bp` queries with `domain=sd` candidates suggests a
-  cross-reference gap rather than a chunking gap.
-- **Coverage** — `% products with a BP page` / `% services with an SD page`, computed from each
-  specialist's `doc_index`. A coverage drop after a refresh means the trigger or the diff missed
-  something.
-- **Freshness** — median age since last refresh per page; `% pages whose content_hash diverges
-  from the current source`. Both come from the doc index without any extra instrumentation.
-- **Open-placeholder rate** — `% pages with at least one unresolved SME-PLACEHOLDER`, derived from
-  each specialist's `open_placeholders` set ([§9.6.1](#951-placeholders-and-re-integration)).
-- **SME resolution time** — median / p95 time from `pending_sme_questions[id].posted_at` to
-  `ingest_sme_reply` ([§9.5](#94-orchestrator-service-design)). Tells us whether the SME loop is
-  keeping pace.
-- **Cross-reference health** — `% relative Markdown links to peer pages that resolve` on a
-  scheduled validator pass over the BP and SD folders. Broken links above a threshold trigger a
-  refresh of the referencing pages.
-- **Latency** — p50 / p95 per MCP method, end-to-end query latency, refresh latency per page (all
-  in [§9.6](#96-audit-and-observability-module-6)).
-- **ToT branch success rate** — fraction of ToT loops (chunking, dep-graph, gap-reconciliation)
-  that exit before the depth cap (already in [§9.6](#96-audit-and-observability-module-6)).
-- **Index-quality hit rate** — chunks repeatedly surviving retrieval but failing the grader; the
-  re-indexing signal that closes the loop with [§9.1.3.1](#9131-autonomous-rag-loop).
+- **Answer re-grade pass rate** — fraction of generated answers clearing the post-generation
+  re-grade, per axis: **faithfulness** (catches hallucination drift) and **answerability**
+  (catches faithful refusals — usually a retrieval or grader gap).
+- **Escalation rate, grader-fail rate, RAG status distribution, ToT branch success rate, latency
+  percentiles, index-quality hit rate** — all derived from §9.6.
+- **Coverage** — `% products with a BP page` / `% services with an SD page` from the doc indexes.
+  A drop after a refresh signals the trigger or diff missed something.
+- **Freshness** — median page age since last refresh; `% pages whose content_hash diverges from
+  current source`. Both come from the doc index, no extra instrumentation.
+- **Open-placeholder rate** — `% pages with at least one unresolved SME-PLACEHOLDER`.
+- **SME resolution time** — median / p95 from `posted_at` to `ingest_sme_reply` — tells us
+  whether the SME loop is keeping pace.
+- **Cross-reference health** — `% relative Markdown links that resolve` on a scheduled validator
+  pass; breakage above threshold triggers a refresh of the referencing pages.
 
-**Offline metrics** — require labeling, sampling, or human review. Higher signal than the online
-ones but slower to update:
+**Offline metrics** — require labeling, sampling, or human review:
 
-- **Correctness** — a small **golden Q&A set** (~30–50 questions across BP and SD domains, with
-  human-validated answers) scored against the agent's responses. Scoring uses LLM-as-judge with a
-  rubric (relevance, completeness, accuracy, citation quality) plus a periodic human spot-check to
-  recalibrate the judge. The golden set is curated by the team and grows over time.
-- **Calibration** — does the agent's `status` track reality? Computed from the golden set: of
-  answers stamped `ok`, what fraction the human reviewer also marked correct; of `low_confidence`,
-  what fraction were actually wrong. A miscalibrated `ok` is the worst failure mode (overconfident
-  hallucination).
-- **Hallucination rate** — separate from faithfulness: the faithfulness re-grade asks "is the
-  answer supported by retrieved chunks?", but a stronger check asks "is every factual claim in the
-  answer supported by at least one cited source?" Run periodically over a sample of recent answers
-  by an LLM judge with a stricter rubric.
-- **Page-quality review** — periodic sampling of newly-generated BP/SD pages, scored by an SME or
-  by an LLM-as-judge with a rubric (structure, completeness, accuracy, link quality). Catches
-  systematic regressions the online metrics miss.
+- **Correctness** — a curated **golden Q&A set** (~30–50 across BP and SD domains, human-validated)
+  scored by LLM-as-judge with a rubric (relevance, completeness, accuracy, citation quality) and
+  periodic human spot-checks to recalibrate the judge.
+- **Calibration** — does `status` track reality? Of answers stamped `ok`, what fraction the human
+  reviewer also marked correct; of `low_confidence`, what fraction were actually wrong. A
+  miscalibrated `ok` is the worst failure mode (overconfident hallucination).
+- **Hallucination rate** — stronger than faithfulness: "is every factual claim supported by at
+  least one cited source?" Run periodically over a sample by an LLM judge with a stricter rubric.
+- **Page-quality review** — periodic sampling of newly-generated pages scored by an SME or
+  LLM-as-judge with a structure/completeness/link-quality rubric. Catches systematic regressions
+  the online metrics miss.
 
-For POC scope (which metrics are wired up from day one, the LLM-as-judge cadence, and what is
-explicitly out of scope), see [Section 8.5](PROJECT_ARCHITECTURE.md#85-considerations-for-the-poc).
+POC scope (what's wired from day one, judge cadence, what's explicitly out) is in
+[§8.5](PROJECT_ARCHITECTURE.md#85-considerations-for-the-poc).
 
 ### 9.8 Documentation Portal
 
-The Portal is the only user-facing surface
-([§8.2](PROJECT_ARCHITECTURE.md#82-high-level-architecture-diagram)). It hosts the chatbot
-that routes queries to the Orchestrator, the SME answer UI, and rendered views of the BP/SD
-pages the agent maintains. For the POC the rendered-views surface dominates — it's how
-leadership / developers / product see what the agent has produced — so the portal ships first
-as a thin viewer of the docs repo with three operator-facing surfaces (SME Answers, Dashboard,
-and a Multi-Agents X-Ray drawer) layered on top.
+The only user-facing surface. Hosts the chatbot that routes queries to the Orchestrator, the SME
+answer UI, and rendered views of the BP/SD pages the agent maintains. For the POC the
+rendered-views surface dominates — it's how leadership / developers / product see what the agent
+has produced — so the portal ships first as a thin viewer of the docs repo with three
+operator-facing surfaces (SME Answers, Dashboard, and the Multi-Agents X-Ray drawer) layered on
+top.
 
 #### 9.8.1 Stack and shape
 
-A single-page web app written in a modern Vue-based framework, talking to two backends:
+A single-page Vue-based web app talking to two backends:
 
-  * **GitHub** — the BP and SD tabs fetch directory listings + file contents directly from
-    the public docs repo (no PAT in the browser, no backend proxy). A future private
-    deployment swaps the direct fetch for an authenticated proxy on the orchestrator.
-  * **Orchestrator** ([§9.4](#94-orchestrator-service-design)) — every dynamic operator-facing
-    surface (queue list + reply, X-Ray streaming, Telemetry polling) is wired to the
-    Orchestrator REST API. CORS is enabled in dev so the portal and the API can run on
-    different origins; production deployments terminate both behind one origin.
+- **GitHub** — the Documentation tab fetches directory listings and file contents directly from
+  the public docs repo (no PAT in the browser, no backend proxy). A future private deployment
+  swaps direct fetch for an authenticated proxy on the orchestrator.
+- **Orchestrator** ([§9.4](#94-orchestrator-service-design)) — every dynamic operator-facing
+  surface (queue list + reply, X-Ray streaming, Dashboard polling) is wired to the REST API.
+  CORS is enabled in dev; production terminates both behind one origin.
 
 #### 9.8.2 Tabs and surfaces
 
 Two operator-workflow tabs on the left, one observability tab pinned to the right edge of the
-tab bar, and a collapsible right-side drawer on top:
+tab bar, and a collapsible right-side drawer:
 
-  * **Documentation** — directory tree of the docs repo's `documentation/` root, plus a
-    Markdown viewer for the selected file. The B&P and SD pages live as siblings under that
-    root (`documentation/bp/`, `documentation/sd/`), so a single tab covers both — operators
-    navigate into whichever subtree they care about and cross-references render as live links
-    inside the same view.
-  * **SME Answers** — paired list + reply form. The list shows pending escalations; selecting
-    one surfaces its topic, the originating page URI(s), the agent's best-guess, and the
-    retrieval trail snippet. The reply form fires the orchestrator's `ingest_sme_reply` flow
-    ([§9.5](#95-sme-interaction-module-6)). After a successful post, the question vanishes
-    from the pending list and a toast names the page(s) that got their placeholder block
-    replaced.
-  * **Dashboard** — pinned to the right of the tab bar. Split into two clearly-labelled
-    sections: **Service Metrics** (infrastructure-level KPIs from the OTel span store —
-    total spans, error rate, overall p95 latency, per-(service, method) span counts and
-    p50/p95 latency, status histograms) and **Agent Metrics** (output-quality KPIs from
-    §9.7 — re-grade pass rate, grader-fail rate, escalation rate, ToT branch success,
-    enrichment outcomes, RAG retrieve status, dispatch+enrich outcomes). The Agent Metrics
-    section also surfaces **LLM latency** sourced from the audit DB's `llm_calls` table
-    (overall call count, error rate, p50, p95) plus a per-`module` latency panel
-    (`rag.auto_rag.grader`, `bp.compose_answer`, `sd.enrich.compose`, …) so the operator
-    can see which step is the slow one. Polled on a short interval — charts re-render in
-    place.
-  * **Multi-Agents X-Ray** *(right-side collapsible drawer, not a tab)* — toggled from a header
-    button. Subscribes to `GET /v1/streams/events`, the merged SSE feed of service-log
-    entries ([§9.6](#96-audit-and-observability-module-6) "service log") and LLM call records
-    ([§9.6](#96-audit-and-observability-module-6) "LLM call audit") — one combined console
-    pane, descending order. Each row carries a `kind` discriminator that drives per-row
-    formatting; clicking any row pops a dialog with the full text (service `message`, or LLM
-    `request` + `response` + optional `error`). The drawer mounts the SSE subscription only
-    while open so background traffic costs nothing.
+- **Documentation** — directory tree of the docs repo's `documentation/` root plus a Markdown
+  viewer. The BP and SD trees live as siblings under that root, so a single tab covers both and
+  cross-references render as live links inside the same view.
+- **SME Answers** — paired list + reply form. The list shows pending escalations; selecting one
+  surfaces its topic, originating page URI(s), agent's best guess, and retrieval trail snippet.
+  Reply fires `ingest_sme_reply` ([§9.5](#95-sme-interaction-module-6)); a toast names the
+  page(s) that got their placeholder replaced.
+- **Dashboard** — pinned to the right of the tab bar. Split into **Service Metrics**
+  (infrastructure-level KPIs from the OTel span store) and **Agent Metrics** (output-quality
+  KPIs from §9.7). The Agent Metrics section also surfaces **LLM latency** from the `llm_calls`
+  audit table (overall call count, error rate, p50, p95) plus a per-module latency panel so the
+  operator can see which step is the slow one. Polled on a short interval — charts re-render in
+  place.
+- **Multi-Agents X-Ray** *(right-side collapsible drawer)* — subscribes to
+  `GET /v1/streams/events`, the merged SSE feed of service-log entries and LLM call records.
+  One combined console pane, descending order; each row carries a `kind` discriminator. Click
+  any row → dialog with the full text. The drawer mounts the SSE subscription only while open.
 
-A **floating chat bubble** is mounted in the layout, visible from every tab. Open it, ask a
-question, and it routes through the orchestrator's query endpoint
-([§9.4.2](#942-apis-rest)). The default domain hint is `both`, overridable in a small
-dropdown for operators who know the question is BP- or SD-only. Answers render as Markdown
-with the cited sources listed beneath; failures surface inline as a red error message.
+A **floating chat bubble** is mounted in the layout, visible from every tab. Routes through the
+orchestrator's query endpoint with a default `domain_hint=both`, overridable from a small
+dropdown. Answers render as Markdown with cited sources beneath.
 
 #### 9.8.3 Branch selector
 
-A selector in the header (one level above the tabs, so it applies to whichever tab is active)
-exposes the canonical branches (`main`, `starting-point`) plus a free-text "custom branch"
-that accepts any ref name. The selected branch lives in a single piece of cross-tab UI state;
-the Documentation tab watches it and re-fetches on change. Multi-Agents X-Ray, Dashboard, and SME
-Answers ignore the branch since they read live runtime state, not git state.
+A header-level selector exposes canonical branches (`main`, `starting-point`) plus a free-text
+"custom branch" that accepts any ref name. The Documentation tab watches the selected branch and
+re-fetches on change; X-Ray, Dashboard, and SME Answers ignore it (they read live runtime state,
+not git state).
 
-The selector is the operator's escape hatch: when an agent run goes wrong, they reset the
-repo to `starting-point` ([§8.5 reset flow](PROJECT_ARCHITECTURE.md#85-considerations-for-the-poc))
-and immediately flip the portal to that branch to confirm the rollback landed before the
+The selector is the operator's escape hatch: when a run goes wrong, reset the repo to
+`starting-point` and flip the portal to that branch to confirm the rollback landed before the
 next refresh.
 
 #### 9.8.4 SSE event streaming
 
-The Multi-Agents X-Ray drawer subscribes to a single merged SSE feed
-(`GET /v1/streams/events` — see [§9.4.2](#942-apis-rest)) backed by a poll-and-emit cursor
-against both audit-DB tables. Per poll cycle the orchestrator queries `service_logs` and
-`llm_calls` for rows newer than each table's cursor, merges by timestamp, and emits each row
-as one event with a `kind` discriminator so the client can format per-row without
-subscribing to two separate streams. No long-polling, no LISTEN/NOTIFY — SQLite doesn't
-support either, and a low-frequency poll is more than fast enough for human-readable
-streaming.
+The X-Ray drawer subscribes to `GET /v1/streams/events` ([§9.4.2](#942-apis-rest)), backed by a
+poll-and-emit cursor against both audit-DB tables. Per cycle the orchestrator queries
+`service_logs` and `llm_calls` for rows newer than each table's cursor, merges by timestamp, and
+emits each row with a `kind` discriminator. No long-polling / LISTEN-NOTIFY — SQLite doesn't
+support either, and a low-frequency poll is plenty for human-readable streaming.
 
-On disconnect the browser backs off and resumes from the last composite SSE id it saw
-(`s:N` for service rows, `l:N` for LLM rows), so a temporary network hiccup doesn't drop
-entries. The drawer mounts the EventSource only while open — closing it tears the
-subscription down so background traffic costs nothing.
+On disconnect the browser backs off and resumes from the last composite SSE id (`s:N` /
+`l:N`), so a temporary hiccup doesn't drop entries. The drawer mounts the EventSource only
+while open.
 
 #### 9.8.5 Out of scope for the POC
 
-  * **Auth** — the portal binds to localhost and trusts everything. Production binds it
-    behind the org's standard SSO; that's a middleware change.
-  * **Multi-repo** — only the single docs repo is wired today. A future deployment with
-    multiple docs repos plugs the repo into the same cross-tab UI state next to the branch.
-  * **Production build** — only the dev-server boot is supported in the POC; bundling the
-    portal into a static asset served by the orchestrator works but isn't part of the
-    standard boot script.
+- **Auth** — portal binds to localhost and trusts everything. Production binds behind the org's
+  SSO; middleware change.
+- **Multi-repo** — only the single docs repo is wired today.
+- **Production build** — only the dev-server boot is supported; static-asset bundling works but
+  isn't part of the standard boot script.
