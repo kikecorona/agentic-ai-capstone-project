@@ -686,7 +686,12 @@ class SDService:
                 open_placeholders=open_placeholder_ids,
                 endpoints=endpoints_payload,
                 downstream_services=downstream_payload,
-                referenced_products=(prior.referenced_products if prior else []),
+                referenced_products=_merged_cross_refs(
+                    prior=(prior.referenced_products if prior else []),
+                    page_content=new_content,
+                    my_domain="sd",
+                    page_uri=page_uri,
+                ),
                 side_info_revision=sd_revision,
                 answered_sme_blocks=answered_blocks,
                 metadata={"commit_sha": commit_sha, "change_kind": change_kind},
@@ -706,7 +711,12 @@ class SDService:
                 chunking_strategy=rag_index_result.get("chunking_strategy"),
                 embedding_revision=rag_index_result.get("embedding_revision"),
                 downstream_services=downstream_payload,
-                referenced_products=(prior.referenced_products if prior else []),
+                referenced_products=_merged_cross_refs(
+                    prior=(prior.referenced_products if prior else []),
+                    page_content=new_content,
+                    my_domain="sd",
+                    page_uri=page_uri,
+                ),
                 open_placeholders=open_placeholder_ids,
                 escalations=[esc.envelope() for esc in escalations],
             )
@@ -1224,3 +1234,22 @@ def _service_from_event(token: str) -> str | None:
     if parts[0] in {"services", "src", "code"}:
         return parts[1] if len(parts) > 1 else None
     return parts[0]
+
+
+def _merged_cross_refs(
+    *,
+    prior: list[str] | None,
+    page_content: str,
+    my_domain: str,
+    page_uri: str,
+) -> list[str]:
+    """Union of prior cross-domain references and any new ones scraped
+    from the current page body. Keeps the dashboard's
+    ``cross_reference_health`` rollup honest as the LLM (and SMEs)
+    drop links into pages over time."""
+    from src.shared.citations import extract_cross_domain_refs
+
+    fresh = extract_cross_domain_refs(
+        page_content, my_domain=my_domain, page_uri=page_uri,
+    )
+    return sorted(set(prior or []) | set(fresh))

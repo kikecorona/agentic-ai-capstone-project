@@ -161,7 +161,12 @@
               <code>{{ branch }}</code>
             </p>
           </div>
-          <article v-else class="markdown-body q-pa-lg" v-html="renderedHtml" />
+          <article
+            v-else
+            class="markdown-body q-pa-lg"
+            v-html="renderedHtml"
+            @click="onMarkdownClick"
+          />
         </q-scroll-area>
         <div v-else class="col column no-wrap editor-pane">
           <q-banner v-if="editError" class="bg-red-9 text-white">
@@ -188,6 +193,7 @@
 import { computed, inject, nextTick, ref, watch } from "vue";
 import { marked } from "marked";
 import mermaid from "mermaid";
+import { useRouter } from "vue-router";
 import { useSettingsStore } from "stores/settings.js";
 
 const props = defineProps({
@@ -208,6 +214,7 @@ const props = defineProps({
 
 const gh = inject("gh");
 const oc = inject("oc", null);
+const router = useRouter();
 const settings = useSettingsStore();
 
 // Where we are right now in the repo. Starts at basePath, changes via
@@ -414,6 +421,53 @@ function openFile(filePath) {
 }
 
 defineExpose({ openFile });
+
+// Click interceptor for the rendered Markdown body. Markdown citation
+// links emitted by the agent (and any hand-authored relative links)
+// land as plain ``<a href="cart-db.md">`` / ``<a href="../bp/foo.md">``
+// elements; the browser would otherwise resolve those against the
+// portal's origin and 404 (e.g. ``http://127.0.0.1:9000/cart-db.md``).
+// We resolve the href against the currently-rendered file's parent
+// directory and route via ``/docs?file=<resolved>`` so the click
+// opens the linked doc in this same viewer instead.
+function onMarkdownClick(event) {
+  const anchor = event.target.closest && event.target.closest("a");
+  if (!anchor) return;
+  const href = anchor.getAttribute("href") || "";
+  // Skip empty fragments, hash-only in-page links, mailto:, and any
+  // absolute URL — those should behave like normal browser links.
+  if (!href || href.startsWith("#") || href.startsWith("mailto:")) return;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(href)) return;
+
+  // Strip optional anchor fragment so the resolution math doesn't
+  // pull a trailing ``#section`` into the file path.
+  const [pathPart] = href.split("#", 1);
+  if (!pathPart) return;
+  // We can only resolve relative links when we know the current file.
+  if (!selectedPath.value) return;
+
+  const baseSegs = selectedPath.value.split("/").slice(0, -1);
+  const targetSegs = pathPart.split("/");
+  const stack = [...baseSegs];
+  for (const seg of targetSegs) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (stack.length) stack.pop();
+      continue;
+    }
+    stack.push(seg);
+  }
+  const resolved = stack.join("/").replace(/^\/+/, "");
+  if (!resolved) return;
+
+  // Only intercept paths that resolve INTO the docs tree — anything
+  // else (broken link, accidental absolute path) should fall through
+  // to the browser so the user sees the real failure mode.
+  if (!resolved.startsWith("documentation/")) return;
+
+  event.preventDefault();
+  router.push({ name: "docs", query: { file: resolved } });
+}
 
 async function loadFile(path) {
   contentLoading.value = true;

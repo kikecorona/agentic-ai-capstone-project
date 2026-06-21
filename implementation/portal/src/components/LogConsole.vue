@@ -54,6 +54,11 @@
         >
           <span class="ts">{{ formatTs(ev) }}</span>
           <span class="lvl" :class="levelClass(ev)">
+            <q-icon
+              :name="ev.kind === 'llm' ? 'smart_toy' : 'description'"
+              size="14px"
+              class="row-icon"
+            />
             {{ levelLabel(ev) }}
           </span>
           <span class="mod">{{ ev.module }}</span>
@@ -339,7 +344,7 @@ function formatMaybeJson(raw) {
 }
 .log-line {
   display: grid;
-  grid-template-columns: 64px 56px 220px 1fr;
+  grid-template-columns: 64px 84px 220px 1fr;
   gap: 0.5rem;
   padding: 1px 0;
   color: #d0d0d0;
@@ -358,6 +363,17 @@ function formatMaybeJson(raw) {
 .lvl {
   font-weight: 600;
   letter-spacing: 0.05em;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+// Tiny inline icon — sits at the start of the level / message span
+// for service-log and LLM rows respectively. Slightly nudged up so it
+// optically centres against the monospace letterforms.
+.row-icon {
+  margin-right: 4px;
+  vertical-align: -2px;
+  opacity: 0.85;
 }
 .lvl-info {
   color: var(--theme-accent-info);

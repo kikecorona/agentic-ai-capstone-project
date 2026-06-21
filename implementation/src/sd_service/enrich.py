@@ -516,7 +516,10 @@ def fill_gap(
     if status == "low_confidence":
         return _escalate(gap, qid=qid, page_uri=page_uri, best_guess=answer)
 
-    section_md = f"## {gap.section_title}\n\n{answer}\n"
+    from src.shared.citations import link_citations
+
+    linked_answer = link_citations(answer, sources=sources, page_uri=page_uri)
+    section_md = f"## {gap.section_title}\n\n{linked_answer}\n"
     log.info(
         f"fill_gap: filled {gap.section_title!r} for {page_uri} "
         f"({len(sources)} source(s)) [strategy=rag]"

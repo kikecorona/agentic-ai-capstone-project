@@ -542,7 +542,9 @@ class BPService:
                 chunking_strategy=rag_index_result.get("chunking_strategy"),
                 embedding_revision=rag_index_result.get("embedding_revision"),
                 open_placeholders=open_placeholder_ids,
-                referenced_services=[r.candidate for r in refs if r.resolved],
+                referenced_services=_merged_referenced_services(
+                    resolved_refs=refs, page_content=new_content, page_uri=page_uri,
+                ),
                 side_info_revision=sd_revision,
                 answered_sme_blocks=answered_blocks,
                 metadata={"commit_sha": commit_sha, "change_kind": change_kind},
@@ -563,7 +565,9 @@ class BPService:
                 chunks_indexed=chunks_indexed,
                 chunking_strategy=rag_index_result.get("chunking_strategy"),
                 embedding_revision=rag_index_result.get("embedding_revision"),
-                referenced_services=[r.candidate for r in refs if r.resolved],
+                referenced_services=_merged_referenced_services(
+                    resolved_refs=refs, page_content=new_content, page_uri=page_uri,
+                ),
                 open_placeholders=open_placeholder_ids,
                 escalations=[_envelope(esc) for esc in escalations],
             )
@@ -1008,3 +1012,28 @@ def _inline_service_links(answer: str, refs) -> str:
         replacement = f"[{r.candidate}](../../{r.page_uri})"
         out = pattern.sub(replacement, out, count=1)
     return out
+
+
+def _merged_referenced_services(
+    *,
+    resolved_refs,
+    page_content: str,
+    page_uri: str,
+) -> list[str]:
+    """Union of services resolved through ``resolve_sd_links`` and any
+    SD-page URIs scraped directly from the merged page body.
+
+    The compose-time resolver finds candidates by name; the citation
+    linker (``shared.citations.link_citations``) emits direct
+    ``[S1](path)`` Markdown links, which compose's by-name extractor
+    misses. Without this merge, the dashboard's
+    ``cross_reference_health`` rollup undercounts citation-driven
+    cross-domain links.
+    """
+    from src.shared.citations import extract_cross_domain_refs
+
+    by_name = {r.candidate for r in (resolved_refs or []) if r.resolved}
+    by_link = set(
+        extract_cross_domain_refs(page_content, my_domain="bp", page_uri=page_uri)
+    )
+    return sorted(by_name | by_link)
