@@ -74,8 +74,9 @@ The nodes:
    caller-supplied `domain_filter`. Static-context questions skip retrieval entirely.
 2. **Retrieval** — similarity search against the chosen embedding view
    ([§6.3](PROJECT.md#63-for-indexing-each-document)) with `domain_filter` pushed into the vector
-   query. K is small (2–5) — we pull the **whole document** into context once selected. No merge
-   step; the grader sees a single ranked list.
+   query. K defaults to **10** (override via `RAG_TOP_K`) — wide enough to span both domains on
+   synthesis questions, narrow enough that the grader stays sharp. No merge step; the grader sees
+   a single ranked list.
 3. **Grader** — LLM scores each retrieved document 0–3. Survivors go to answer generation, then a
    second-pass **answer re-grade** scores along two axes: **faithfulness** (every claim supported
    by a source — catches hallucinations) and **answerability** (the answer substantively addresses

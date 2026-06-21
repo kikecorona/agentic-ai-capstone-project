@@ -42,7 +42,7 @@ log = get_logger("rag.auto_rag")
 @dataclass(frozen=True)
 class AutoRAGConfig:
     rewrite_budget: int = 2          # R cap (§9.1.3.1)
-    top_k: int = 4                   # K (§9.1.3.1: K is small, 2–5)
+    top_k: int = 10                  # K (§9.1.3.1)
     grade_threshold: float = 2.0     # 0–3 grader scale
     no_signal_distance: float = 1.6  # "exhausted" when best distance > this
     bad_chunk_repeat_threshold: int = 2  # surfaces an index-quality flag

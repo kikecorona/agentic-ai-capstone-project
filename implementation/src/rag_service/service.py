@@ -60,7 +60,7 @@ class ToTConfig:
 def default_auto_rag_config() -> AutoRAGConfig:
     return AutoRAGConfig(
         rewrite_budget=int(os.environ.get("RAG_REWRITE_BUDGET", "2")),
-        top_k=int(os.environ.get("RAG_TOP_K", "4")),
+        top_k=int(os.environ.get("RAG_TOP_K", "10")),
         grade_threshold=float(os.environ.get("RAG_GRADE_THRESHOLD", "2.0")),
     )
 
