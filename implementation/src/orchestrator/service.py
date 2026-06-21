@@ -423,16 +423,26 @@ class OrchestratorService:
                 f"originating_pages={len(entry.originating_pages)}"
             )
 
-            # 1. Persist as a fresh BP doc.
+            # 1. Persist as a fresh archival doc, routed to whichever
+            #    specialist owns the question. SD questions land at
+            #    ``documentation/sd/sme-replies/<id>.md``; BP at the
+            #    BP-side equivalent. The originating page itself is
+            #    patched in place by step 2; this archival copy is
+            #    purely a record so the SME exchange is searchable
+            #    later.
+            ingest_owner = (entry.domain or "bp").lower()
+            ingest_client = self._sd if ingest_owner == "sd" else self._bp
             with self._otel.span(
                 service=SERVICE_NAME,
                 mcp_method="ingest_sme_doc",
-                mcp_domain="bp",
+                mcp_domain=ingest_owner,
             ) as inner:
-                ingest_out = self._bp.ingest_sme_doc(
+                ingest_out = ingest_client.ingest_sme_doc(
                     question_id=question_id,
                     sme_text=sme_text,
                     originating_pages=list(entry.originating_pages),
+                    topic=entry.topic,
+                    question=entry.question,
                 )
                 inner.set_status("ok")
                 inner.set_payload_summary({
@@ -440,15 +450,14 @@ class OrchestratorService:
                 })
             new_doc_uri = ingest_out.get("new_page_uri")
 
-            # 2. Patch every originating page through its owning specialist.
+            # 2. Patch every originating page through its owning
+            #    specialist. The replacement is the SME's plain text —
+            #    the whole ``SME-PLACEHOLDER`` block (header, status
+            #    line, question id, asked-at) is dropped so the page
+            #    reads naturally and nothing in the body hints at
+            #    the original placeholder.
             patched: list[dict[str, Any]] = []
-            link_md = (
-                f"> **SME answer (recorded {question_id})**\n>\n"
-                f"> {sme_text.strip()}\n>\n"
-                f"> See [`{new_doc_uri}`](../../{new_doc_uri}) for the canonical reply."
-                if new_doc_uri
-                else f"> **SME answer (recorded {question_id})**\n>\n> {sme_text.strip()}"
-            )
+            replacement_md = (sme_text or "").strip()
             for page in entry.originating_pages:
                 owner = owning_specialist_for_page(page) or entry.domain
                 client = self._bp if owner == "bp" else self._sd
@@ -456,7 +465,7 @@ class OrchestratorService:
                     res = client.patch_page(
                         page_uri=page,
                         question_id=question_id,
-                        replacement=link_md,
+                        replacement=replacement_md,
                     )
                     patched.append({
                         "page_uri": page,

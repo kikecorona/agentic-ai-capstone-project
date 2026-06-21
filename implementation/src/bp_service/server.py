@@ -114,10 +114,18 @@ def build_server(
             repo=gh_repo,
             branch=env_url("GITHUB_BRANCH") or "main",
         )
+        # BP writes its pages under documentation/bp/. The page URIs
+        # the service constructs already start with ``bp/`` (see
+        # ``DEFAULT_PAGE_PREFIX = "bp/products/"``), so the
+        # page-store's ``pages_prefix`` only contributes the
+        # ``documentation`` root — anything more would double the
+        # ``bp/`` segment and land pages at
+        # ``documentation/bp/bp/products/...`` instead of the
+        # intended ``documentation/bp/products/...``.
         page_store = GitHubPageStore(
             github=github,
-            inputs_prefix=env_url("BP_PAGES_GH_PATH") or "documentation/bp",
-            pages_prefix=env_url("BP_PAGES_GH_PATH") or "documentation/bp",
+            inputs_prefix=env_url("BP_INPUTS_GH_PATH") or "documentation",
+            pages_prefix=env_url("BP_PAGES_GH_PATH") or "documentation",
         )
     else:
         page_store = LocalPageStore(inputs_root=inputs_root, pages_root=pages_root)
@@ -225,11 +233,15 @@ def build_server(
         question_id: str,
         sme_text: str,
         originating_pages: list[str] | None = None,
+        topic: str | None = None,
+        question: str | None = None,
     ) -> dict[str, Any]:
         return bp.ingest_sme_doc(
             question_id=question_id,
             sme_text=sme_text,
             originating_pages=originating_pages,
+            topic=topic,
+            question=question,
         )
 
     return mcp, bp

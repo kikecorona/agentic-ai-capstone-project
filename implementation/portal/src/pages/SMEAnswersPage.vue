@@ -70,9 +70,10 @@
       </div>
       <template v-else>
         <div class="col-6 q-pa-md sme-form column no-wrap full-height">
-          <q-toolbar class="bg-grey-8 text-white q-mb-sm rounded-borders">
+          <q-toolbar class="bg-grey-9 text-white q-mb-sm rounded-borders">
             <q-icon name="help_outline" class="q-mr-sm" />
-            <span class="ellipsis topic">{{ selected.topic }}</span>
+            <span class="retro-display ellipsis">{{ selected.topic }}</span>
+            <code class="qid-chip q-ml-sm">{{ selected.question_id }}</code>
             <q-space />
             <q-chip dense square color="accent" text-color="dark">
               {{ selected.domain }}
@@ -348,6 +349,19 @@ onMounted(reload);
   font-family: "JetBrains Mono", monospace;
   font-weight: 600;
 }
+// Question id rendered next to the topic in the selected-question
+// header. Uses the JetBrains-Mono treatment (matching the rest of
+// the qid styling on the pending list) but tones the colour down
+// so it sits next to the retro topic display without competing.
+.qid-chip {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--theme-text-muted, #aaa);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 2px;
+  letter-spacing: 0.04em;
+}
 .origin-suffix {
   color: var(--theme-text-muted, #888);
   font-weight: 400;
@@ -425,6 +439,14 @@ onMounted(reload);
   // form (textarea grow, autocorrect underline) doesn't drag the
   // rendered markdown + mermaid SVGs through a layout pass too.
   contain: layout style;
+}
+// DocsViewer paints its own 4px accent left border on
+// ``.markdown-body``; that's nice on the Documentation tab where
+// there's no outer container, but inside ``.origin-frame`` it
+// clashes with the container's own 1px accent border. Suppress it
+// here so only the container border is visible.
+.origin-frame :deep(.markdown-body) {
+  border-left: 0;
 }
 // Theme the right-pane cards (question/best-guess, originating pages,
 // reply form). Quasar's default ``.q-card`` is a white surface that

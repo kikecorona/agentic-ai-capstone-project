@@ -161,6 +161,25 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
+class EditDocRequest(BaseModel):
+    """Body for ``POST /v1/docs/edit``. Lets the portal save manual
+    edits to a Markdown file in the configured docs repo via the
+    GitHub MCP. The path must already point inside the docs tree
+    (``documentation/...``); auth is the orchestrator's PAT."""
+
+    path: str = Field(min_length=1)
+    content: str
+    branch: str | None = None
+    message: str | None = None
+
+
+class EditDocResponse(BaseModel):
+    path: str
+    branch: str
+    commit_sha: str | None = None
+    blob_sha: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
@@ -466,6 +485,176 @@ def build_app(
 
         return out
 
+    # ----------------------------------------------------------- /v1/docs/raw
+    @app.get("/v1/docs/raw", tags=["portal"])
+    def get_doc_raw(
+        path: str = Query(..., min_length=1),
+        ref: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        """Server-side proxy for raw doc reads.
+
+        ``raw.githubusercontent.com`` sits behind Fastly with a multi-
+        minute CDN TTL that ignores both query-string cache busts and
+        ``cache: no-store`` (those only suppress the *browser's* HTTP
+        cache, not the edge's), so the SME panel sees stale bodies for
+        several minutes after a successful patch. The Contents API is
+        served directly from ``api.github.com``, *not* CDN-cached, and
+        anonymous portals can't hit it from the browser without
+        burning the 60 req/hour anon rate limit on directory listings.
+        Routing through the orchestrator side-steps both: we call
+        ``api.github.com`` with the PAT and surface the raw body to
+        the portal.
+
+        Out-of-tree paths and non-GitHub deployments are rejected with
+        4xx / 503 so the portal surfaces a useful error.
+        """
+        clean = (path or "").lstrip("/").strip()
+        if not clean or not clean.startswith("documentation/"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"path must start with 'documentation/' (got {path!r})",
+            )
+        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", "").strip()
+        owner = os.environ.get("GITHUB_OWNER", "").strip()
+        repo = os.environ.get("GITHUB_REPO", "").strip()
+        if not (token and owner and repo):
+            raise HTTPException(
+                status_code=503,
+                detail="GitHub config missing (GITHUB_PERSONAL_ACCESS_TOKEN / GITHUB_OWNER / GITHUB_REPO)",
+            )
+        branch = (ref or os.environ.get("GITHUB_BRANCH") or "main").strip() or "main"
+        import urllib.parse
+        import urllib.request
+
+        url = (
+            f"https://api.github.com/repos/{owner}/{repo}/contents/"
+            f"{urllib.parse.quote(clean)}?ref={urllib.parse.quote(branch)}"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github.raw",
+                "User-Agent": "capstone-orchestrator",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            raise HTTPException(
+                status_code=exc.code if 400 <= exc.code < 600 else 502,
+                detail=f"GitHub fetch failed: HTTP {exc.code} {exc.reason}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"GitHub fetch failed: {exc}")
+        return {"path": clean, "branch": branch, "content": body}
+
+    # ----------------------------------------------------------- /v1/docs/list
+    @app.get("/v1/docs/list", tags=["portal"])
+    def list_doc_dir(
+        path: str = Query(..., min_length=1),
+        ref: str | None = Query(default=None),
+    ) -> list[dict[str, Any]]:
+        """Authenticated directory listing for the Documentation tab.
+        Same rationale as ``/v1/docs/raw``: anonymous browser calls to
+        ``api.github.com`` would burn the 60 req/hour shared anon limit
+        in a few clicks. Returns a list of ``{name, path, type, size}``
+        entries, the same shape the Quasar tree expects."""
+        clean = (path or "").lstrip("/").strip()
+        if not clean or not clean.startswith("documentation"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"path must start with 'documentation' (got {path!r})",
+            )
+        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", "").strip()
+        owner = os.environ.get("GITHUB_OWNER", "").strip()
+        repo = os.environ.get("GITHUB_REPO", "").strip()
+        if not (token and owner and repo):
+            raise HTTPException(
+                status_code=503,
+                detail="GitHub config missing (GITHUB_PERSONAL_ACCESS_TOKEN / GITHUB_OWNER / GITHUB_REPO)",
+            )
+        branch = (ref or os.environ.get("GITHUB_BRANCH") or "main").strip() or "main"
+        import urllib.parse
+        import urllib.request
+
+        url = (
+            f"https://api.github.com/repos/{owner}/{repo}/contents/"
+            f"{urllib.parse.quote(clean)}?ref={urllib.parse.quote(branch)}"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "capstone-orchestrator",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise HTTPException(
+                status_code=exc.code if 400 <= exc.code < 600 else 502,
+                detail=f"GitHub list failed: HTTP {exc.code} {exc.reason}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"GitHub list failed: {exc}")
+        if not isinstance(payload, list):
+            raise HTTPException(
+                status_code=400,
+                detail=f"path is not a directory: {clean!r}",
+            )
+        return [
+            {
+                "name": e.get("name"),
+                "path": e.get("path"),
+                "type": e.get("type"),
+                "size": e.get("size"),
+            }
+            for e in payload
+        ]
+
+    # ----------------------------------------------------------- /v1/docs/edit
+    @app.post("/v1/docs/edit", response_model=EditDocResponse, tags=["portal"])
+    def post_edit_doc(req: EditDocRequest) -> EditDocResponse:
+        """Save a manual edit from the Documentation tab back to the
+        configured docs repo via the GitHub MCP. Out-of-tree paths
+        and non-GitHub deployments are rejected with 4xx so the
+        portal surfaces a useful error."""
+        path = (req.path or "").lstrip("/").strip()
+        if not path or not path.startswith("documentation/"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"path must start with 'documentation/' (got {req.path!r})",
+            )
+        bp_service = getattr(app.state, "bp", None)
+        page_store = getattr(bp_service, "_pages", None) if bp_service else None
+        gh = getattr(page_store, "_gh", None)
+        if gh is None:
+            raise HTTPException(
+                status_code=503,
+                detail="GitHub MCP not wired on this deployment; manual edits require the GitHub-backed page store",
+            )
+        branch = (req.branch or gh.branch or "main").strip() or "main"
+        message = (req.message or f"portal: edit {path}").strip()
+        try:
+            res = gh.create_or_update_file(
+                path,
+                req.content,
+                message,
+                branch=branch,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"GitHub write failed: {exc}")
+        return EditDocResponse(
+            path=path,
+            branch=branch,
+            commit_sha=res.get("commit_sha"),
+            blob_sha=res.get("blob_sha"),
+        )
+
     return app
 
 # ---------------------------------------------------------------------------
@@ -485,10 +674,16 @@ def _agent_quality_rollup() -> dict[str, Any]:
         ``SME-PLACEHOLDER`` block still open.
       * **sme_resolution_time** — median / p95 of
         ``answered_at - posted_at`` over answered questions.
+      * **cross_reference_health** — fraction of relative Markdown
+        links inside BP/SD pages that resolve against the page set.
+      * **index_quality_hit_rate** — chunks repeatedly surviving
+        retrieval but failing the grader, aggregated across the
+        ``rag_service.retrieve`` span stream.
 
     Each section catches its own exceptions so a single corrupt DB
     doesn't blank the rest of the rollup.
     """
+    import re as _re
     import time as _time
 
     from src.bp_service.store import BPDocIndex, default_db_path as _bp_default
@@ -501,6 +696,8 @@ def _agent_quality_rollup() -> dict[str, Any]:
         "freshness": {},
         "open_placeholder_rate": {},
         "sme_resolution_time": {},
+        "cross_reference_health": {},
+        "index_quality_hit_rate": {},
     }
 
     bp_pages: list[Any] = []
@@ -518,29 +715,40 @@ def _agent_quality_rollup() -> dict[str, Any]:
         out["coverage"]["sd_error"] = str(exc)
 
     # ---- coverage --------------------------------------------------------
-    # SD coverage = fraction of SD-referenced services that BP also covers
-    # (a BP page name resolves to one of SD's referenced products), and
-    # symmetrically for BP coverage. We compare URI tails so the
-    # ``documentation/{bp,sd}/`` prefix doesn't poison the join.
-    bp_uris = {_strip_doc_prefix(p.page_uri) for p in bp_pages}
-    sd_uris = {_strip_doc_prefix(p.page_uri) for p in sd_pages}
+    # SD's ``referenced_products`` carries full URIs (``bp/products/foo.md``)
+    # but BP's ``referenced_services`` carries bare slugs (``catalog``,
+    # ``billing-service``). Normalise both sides to "stems" — the
+    # filename without its directory or extension — so the join works
+    # in either direction. ``bp/products/catalog.md`` → ``catalog``;
+    # ``catalog`` → ``catalog``; ``billing-service`` → ``billing-service``.
+    def _stem(s: str) -> str:
+        if not s:
+            return ""
+        x = str(s).strip().replace("\\", "/").rstrip("/")
+        x = x.split("/")[-1] if "/" in x else x
+        if x.endswith(".md"):
+            x = x[:-3]
+        return x.lower()
+
+    bp_stems = {_stem(p.page_uri) for p in bp_pages if p.page_uri}
+    sd_stems = {_stem(p.page_uri) for p in sd_pages if p.page_uri}
 
     refs_from_sd: set[str] = set()
     for p in sd_pages:
-        refs_from_sd.update(_strip_doc_prefix(r) for r in (p.referenced_products or []))
+        refs_from_sd.update(_stem(r) for r in (p.referenced_products or []) if r)
     refs_from_bp: set[str] = set()
     for p in bp_pages:
-        refs_from_bp.update(_strip_doc_prefix(r) for r in (getattr(p, "referenced_services", None) or []))
+        refs_from_bp.update(_stem(r) for r in (getattr(p, "referenced_services", None) or []) if r)
 
     if refs_from_sd:
-        bp_hits = sum(1 for r in refs_from_sd if r in bp_uris)
+        bp_hits = sum(1 for r in refs_from_sd if r in bp_stems)
         out["coverage"]["bp"] = {
             "ratio": bp_hits / len(refs_from_sd),
             "covered": bp_hits,
             "expected": len(refs_from_sd),
         }
     if refs_from_bp:
-        sd_hits = sum(1 for r in refs_from_bp if r in sd_uris)
+        sd_hits = sum(1 for r in refs_from_bp if r in sd_stems)
         out["coverage"]["sd"] = {
             "ratio": sd_hits / len(refs_from_bp),
             "covered": sd_hits,
@@ -574,6 +782,22 @@ def _agent_quality_rollup() -> dict[str, Any]:
             "ratio": (with_open / len(pages)) if pages else 0,
         }
 
+    # ---- cross_reference_health -----------------------------------------
+    # Same join as coverage (stem-based), but also surfaces a "broken
+    # cross-references" count so the operator knows whether the
+    # rollup is hitting the right pages.
+    if refs_from_sd or refs_from_bp:
+        all_refs = refs_from_sd | refs_from_bp
+        all_stems = bp_stems | sd_stems
+        resolved = sum(1 for r in all_refs if r in all_stems)
+        broken = len(all_refs) - resolved
+        out["cross_reference_health"] = {
+            "ratio": resolved / len(all_refs) if all_refs else 0,
+            "resolved": resolved,
+            "broken": broken,
+            "total": len(all_refs),
+        }
+
     # ---- sme_resolution_time --------------------------------------------
     try:
         oc_db = os.environ.get("OC_DB_PATH", str(_oc_default()))
@@ -602,6 +826,45 @@ def _agent_quality_rollup() -> dict[str, Any]:
                 }
     except Exception as exc:  # noqa: BLE001
         out["sme_resolution_time"] = {"error": str(exc)}
+
+    # ---- index_quality_hit_rate -----------------------------------------
+    # Aggregated from the OTel store: every ``rag_service.retrieve``
+    # span carries an ``index_quality_flags`` count in its
+    # ``payload_summary``. Sum the count across all retrieves and
+    # divide by total retrieves to get the per-call hit rate.
+    try:
+        from src.otel_mcp.store import SpanStore
+
+        otel_db = os.environ.get("OTEL_DB_PATH", "./data/otel/spans.db")
+        if Path(otel_db).exists():
+            store = SpanStore(otel_db)
+            spans = store.query(
+                service="rag_service",
+                mcp_method="retrieve",
+                limit=10_000,
+            )
+            flagged_total = 0
+            retrieves_with_flag = 0
+            for s in spans:
+                summary = getattr(s, "payload_summary", None) or {}
+                if isinstance(summary, str):
+                    try:
+                        summary = json.loads(summary)
+                    except Exception:  # noqa: BLE001
+                        summary = {}
+                flag_count = int((summary or {}).get("index_quality_flags") or 0)
+                if flag_count > 0:
+                    retrieves_with_flag += 1
+                    flagged_total += flag_count
+            if spans:
+                out["index_quality_hit_rate"] = {
+                    "ratio": retrieves_with_flag / len(spans),
+                    "retrieves_with_flag": retrieves_with_flag,
+                    "flagged_chunks_total": flagged_total,
+                    "retrieves_total": len(spans),
+                }
+    except Exception as exc:  # noqa: BLE001
+        out["index_quality_hit_rate"] = {"error": str(exc)}
 
     return out
 

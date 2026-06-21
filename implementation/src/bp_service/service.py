@@ -251,6 +251,12 @@ class BPService:
             pages = [single_page]
         else:
             pages = self._pages.list_pages()
+            # Filter to BP-rooted pages only — the page-store now
+            # surfaces the entire ``documentation/`` tree (so pages
+            # from other domains and the shared
+            # ``documentation/sme-responses/`` archive show up too).
+            # We only enrich what we own.
+            pages = [p for p in pages if p and p.startswith("bp/")]
 
         log.info(
             f"dispatch_refresh start change_kind={change_kind} "
@@ -593,22 +599,35 @@ class BPService:
                 continue
             if self._doc_index.get(stub_page_uri) is not None and not force:
                 continue
-            try:
-                self._pages.write_page(stub_page_uri, _stub_page_md(slug))
-                log.info(f"_discover_new_pages: stubbed {stub_page_uri}")
-                out.append(RefreshOutcome(
-                    page_uri=stub_page_uri,
-                    chunks_indexed=0,
-                    chunking_strategy=None,
-                    embedding_revision=None,
-                    referenced_services=[],
-                    open_placeholders=[],
-                    escalations=[],
-                    skipped=True,
-                    skip_reason="stub_created",
-                ))
-            except Exception as exc:  # noqa: BLE001
-                log.error(f"_discover_new_pages: stub {stub_page_uri} failed: {exc}")
+            # Wrap the stub write in an ``enrich_page`` span with
+            # ``status=stub_created`` so the Dashboard's
+            # "new pages stubbed" KPI has a row to count. Without a
+            # span emission here the status histogram never sees
+            # ``stub_created`` no matter how many stubs we create.
+            with self._otel.span(
+                service=SERVICE_NAME,
+                mcp_method="enrich_page",
+                mcp_domain="bp",
+                attributes={"page_uri": stub_page_uri, "page_kind": "stub"},
+            ) as stub_span:
+                try:
+                    self._pages.write_page(stub_page_uri, _stub_page_md(slug))
+                    log.info(f"_discover_new_pages: stubbed {stub_page_uri}")
+                    stub_span.set_status("stub_created")
+                    out.append(RefreshOutcome(
+                        page_uri=stub_page_uri,
+                        chunks_indexed=0,
+                        chunking_strategy=None,
+                        embedding_revision=None,
+                        referenced_services=[],
+                        open_placeholders=[],
+                        escalations=[],
+                        skipped=True,
+                        skip_reason="stub_created",
+                    ))
+                except Exception as exc:  # noqa: BLE001
+                    stub_span.set_status("error")
+                    log.error(f"_discover_new_pages: stub {stub_page_uri} failed: {exc}")
         return out
 
     def _collect_sd_summary(self) -> dict[str, Any]:
@@ -621,6 +640,52 @@ class BPService:
             log.warn(f"_collect_sd_summary: sd.list_pages failed: {exc}")
             return {}
         return {"pages": pages or []}
+
+    def _resolve_existing_page(self, page_uri: str) -> tuple[str | None, str]:
+        """Read a page, trying alternate URI shapes if the primary
+        lookup misses. Returns ``(content, resolved_uri)`` where
+        ``content`` is None if no variant exists.
+
+        Why try alternates: the queue's ``originating_pages`` may
+        carry URIs from before the ``pages_prefix`` env-var fix.
+        Pre-fix the page-store joined ``documentation/bp`` with
+        ``bp/products/foo.md`` and produced
+        ``documentation/bp/bp/products/foo.md`` — so older
+        escalations have the URI that maps to that doubled path.
+        Post-fix the page-store joins ``documentation`` with
+        ``bp/products/foo.md`` for ``documentation/bp/products/foo.md``.
+        Trying ``products/foo.md`` (strip the leading ``bp/``) and
+        the leading ``documentation/`` strip both round-trip an old
+        URI to whatever shape the page-store expects today.
+        """
+        candidates = [page_uri]
+        # Strip leading ``documentation/`` if the caller passed a
+        # repo-rooted path.
+        if page_uri.startswith("documentation/"):
+            candidates.append(page_uri[len("documentation/"):])
+        # Try without the leading domain segment, in case the URI
+        # was built when ``pages_prefix`` already supplied it.
+        for prefix in ("bp/", "sd/"):
+            if page_uri.startswith(prefix):
+                candidates.append(page_uri[len(prefix):])
+        # And the inverse: caller passed a path relative to the old
+        # per-domain ``pages_prefix`` and we need to add ``bp/`` back.
+        if not page_uri.startswith(("bp/", "sd/", "documentation/")):
+            candidates.append(f"bp/{page_uri}")
+        seen: set[str] = set()
+        for cand in candidates:
+            if not cand or cand in seen:
+                continue
+            seen.add(cand)
+            content = self._pages.read_page(cand)
+            if content is not None:
+                if cand != page_uri:
+                    log.warn(
+                        f"patch_page: resolved {page_uri!r} via alternate "
+                        f"{cand!r} (likely from a pre-prefix-fix queue entry)"
+                    )
+                return content, cand
+        return None, page_uri
 
     def _get_chat_llm(self):
         """Lazy LLM instance for enrichment. Cached on the service so
@@ -711,23 +776,37 @@ class BPService:
             service=SERVICE_NAME,
             mcp_method="patch_page",
         ) as span:
-            content = self._pages.read_page(page_uri)
+            # Some queue entries carry URIs from before the
+            # ``pages_prefix`` fix (and from environments where the
+            # value was ``documentation/bp`` rather than
+            # ``documentation``). Try the queued URI first, and if it
+            # 404s try a couple of alternate shapes so historical
+            # escalations still patch cleanly:
+            #   * ``documentation/bp/<rest>`` — caller passed a full
+            #     repo-rooted path; strip the doc root.
+            #   * ``products/foo.md`` (no ``bp/`` prefix) — caller
+            #     passed a URI relative to the old per-domain
+            #     ``pages_prefix=documentation/bp``.
+            content, resolved_uri = self._resolve_existing_page(page_uri)
             if content is None:
                 span.set_status("not_found")
-                log.error(f"patch_page: {page_uri!r} does not exist")
+                log.error(f"patch_page: {page_uri!r} does not exist (tried alternates)")
                 raise FileNotFoundError(f"page not found: {page_uri}")
-            # Wrap the SME reply in matching SME-ANSWERED:<qid> fences so
-            # `extract_answered_sme_blocks` finds it on the next refresh
-            # and preserves the prose verbatim — without the fences the
-            # next enrichment pass would overwrite the answer with
-            # freshly-composed filler.
-            wrapped_replacement = wrap_sme_answer(
-                question_id=question_id, prose=replacement,
-            )
+            page_uri = resolved_uri
+            # The SME's reply is inserted as plain prose — no wrapping
+            # fences. The whole ``SME-PLACEHOLDER`` block is replaced
+            # with the answer, so the page reads naturally and the
+            # next refresh treats the prose as substantive content
+            # (``_section_body_is_fillable`` returns False, the
+            # merger's safety check refuses to overwrite). This is
+            # what "trim the whole SME section" looks like in
+            # practice: nothing in the page hints at the original
+            # placeholder anymore.
+            replacement_prose = (replacement or "").strip()
             new_content, replaced = replace_placeholder_block(
                 content,
                 question_id=question_id,
-                replacement=wrapped_replacement,
+                replacement=replacement_prose,
             )
             if not replaced:
                 span.set_status("not_found")
@@ -783,22 +862,31 @@ class BPService:
         question_id: str,
         sme_text: str,
         originating_pages: list[str] | None = None,
+        topic: str | None = None,
+        question: str | None = None,
     ) -> dict[str, Any]:
         """Persist an SME reply as a brand-new BP page (§9.3.2)."""
         if not (question_id and sme_text):
             log.error("ingest_sme_doc: question_id and sme_text are required")
             raise ValueError("ingest_sme_doc: question_id and sme_text are required")
-        page_uri = f"{self._page_prefix}sme-replies/{question_id}.md"
+        # SME replies live in a shared ``documentation/sme-responses/``
+        # tree (no domain prefix) so neither BP's nor SD's
+        # ``dispatch_refresh`` iterates them as enrichable pages
+        # — see the per-service ``list_pages`` filter that drops
+        # anything outside the domain root.
+        page_uri = f"sme-responses/{question_id}.md"
         with self._otel.span(
             service=SERVICE_NAME,
             mcp_method="ingest_sme_doc",
         ) as span:
             now = time.time()
+            origin_lines = ", ".join(originating_pages or []) or "(none)"
             content = (
-                f"# SME reply: {question_id}\n\n"
+                f"# SME reply: {topic or question_id}\n\n"
                 f"> Persisted on {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(now))}.\n"
-                f"> Originating pages: {', '.join(originating_pages or []) or '(none)'}\n\n"
-                f"{sme_text.strip()}\n"
+                f"> Question id: `{question_id}` · Originating pages: {origin_lines}\n\n"
+                f"## Question\n\n{(question or '(not recorded)').strip()}\n\n"
+                f"## Answer\n\n{sme_text.strip()}\n"
             )
             commit_sha = self._pages.write_page(page_uri, content)
             try:

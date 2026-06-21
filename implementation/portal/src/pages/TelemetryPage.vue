@@ -243,9 +243,8 @@
 
     <!-- §9.7 doc-index + SME-loop KPIs sourced from /v1/metrics's
          `agent` section (BP/SD doc-indexes + orchestrator's
-         pending_sme_questions table). The two cards still rendered
-         as `dashboard-pending-card` are the ones that need data
-         sources outside the existing on-disk state. -->
+         pending_sme_questions table + RAG retrieve span store).
+         All §9.7 online metrics now have wired data sources. -->
     <div class="row q-col-gutter-md q-mb-md">
       <div class="col-12 col-sm-6 col-md-4">
         <kpi-card
@@ -280,17 +279,19 @@
         />
       </div>
       <div class="col-12 col-sm-6 col-md-4">
-        <dashboard-pending-card
+        <kpi-card
           label="cross-reference health"
-          sub="% relative MD links that resolve"
-          source="needs scheduled link-validator pass"
+          :value="crossRefLabel"
+          :sub="crossRefSub"
+          :accent="crossRefRatio !== null && crossRefRatio < 0.8 ? 'warning' : 'accent'"
         />
       </div>
       <div class="col-12 col-sm-6 col-md-4">
-        <dashboard-pending-card
+        <kpi-card
           label="index-quality hit rate"
-          sub="chunks surviving retrieval but failing the grader"
-          source="needs span-attribute aggregation"
+          :value="indexQualityLabel"
+          :sub="indexQualitySub"
+          :accent="indexQualityRatio !== null && indexQualityRatio > 0.2 ? 'warning' : 'accent'"
         />
       </div>
     </div>
@@ -302,7 +303,6 @@ import { computed, inject, onBeforeUnmount, onMounted, ref } from "vue";
 import MetricsPanel from "components/MetricsPanel.vue";
 import KpiCard from "components/KpiCard.vue";
 import DashboardSectionHeader from "components/DashboardSectionHeader.vue";
-import DashboardPendingCard from "components/DashboardPendingCard.vue";
 
 const oc = inject("oc");
 
@@ -678,6 +678,42 @@ const smeResolutionSub = computed(() => {
   const p95 = t.p95_s != null ? `p95 ${formatAge(t.p95_s)}` : null;
   const counts = `${t.answered ?? 0} answered · ${t.pending ?? 0} pending`;
   return p95 ? `${p95} · ${counts}` : counts;
+});
+
+// Cross-reference health — % of relative MD links across BP/SD that
+// resolve. Pulled from the same join the coverage card uses.
+const crossRefRatio = computed(() => {
+  const r = agent.value.cross_reference_health?.ratio;
+  return r === undefined ? null : r;
+});
+const crossRefLabel = computed(() => {
+  if (crossRefRatio.value === null) return "—";
+  return formatPct(crossRefRatio.value);
+});
+const crossRefSub = computed(() => {
+  const c = agent.value.cross_reference_health;
+  // Guard against the rollup returning an empty dict (no cross-refs
+  // recorded yet). ``!c`` only catches null/undefined; an empty
+  // object would slip through and render "undefined/undefined".
+  if (!c || c.total == null) return "no cross-references";
+  return `${c.resolved}/${c.total} resolved · ${c.broken} broken`;
+});
+
+// Index-quality hit rate — fraction of RAG retrieves that flagged at
+// least one chunk as surviving retrieval but failing the grader (a
+// re-index signal). Pulled from rag_service.retrieve span summaries.
+const indexQualityRatio = computed(() => {
+  const r = agent.value.index_quality_hit_rate?.ratio;
+  return r === undefined ? null : r;
+});
+const indexQualityLabel = computed(() => {
+  if (indexQualityRatio.value === null) return "—";
+  return formatPct(indexQualityRatio.value);
+});
+const indexQualitySub = computed(() => {
+  const q = agent.value.index_quality_hit_rate;
+  if (!q || q.retrieves_total == null) return "no retrieves yet";
+  return `${q.retrieves_with_flag}/${q.retrieves_total} retrieves · ${q.flagged_chunks_total} flagged`;
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────

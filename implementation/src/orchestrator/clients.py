@@ -42,6 +42,8 @@ class BPClient(Protocol):
         question_id: str,
         sme_text: str,
         originating_pages: list[str] | None = None,
+        topic: str | None = None,
+        question: str | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -77,11 +79,15 @@ class InProcessBPClient:
         question_id: str,
         sme_text: str,
         originating_pages: list[str] | None = None,
+        topic: str | None = None,
+        question: str | None = None,
     ) -> dict[str, Any]:
         return self._bp.ingest_sme_doc(
             question_id=question_id,
             sme_text=sme_text,
             originating_pages=originating_pages,
+            topic=topic,
+            question=question,
         )
 
 
@@ -110,6 +116,16 @@ class SDClient(Protocol):
     def get_page(self, page_uri: str) -> dict[str, Any]: ...
 
     def patch_page(self, *, page_uri: str, question_id: str, replacement: str) -> dict[str, Any]: ...
+
+    def ingest_sme_doc(
+        self,
+        *,
+        question_id: str,
+        sme_text: str,
+        originating_pages: list[str] | None = None,
+        topic: str | None = None,
+        question: str | None = None,
+    ) -> dict[str, Any]: ...
 
 
 class StubSDClient:
@@ -140,3 +156,14 @@ class StubSDClient:
 
     def patch_page(self, *, page_uri: str, question_id: str, replacement: str) -> dict[str, Any]:
         return {"commit_sha": None, "patched": False}
+
+    def ingest_sme_doc(
+        self,
+        *,
+        question_id: str,
+        sme_text: str,
+        originating_pages: list[str] | None = None,
+        topic: str | None = None,
+        question: str | None = None,
+    ) -> dict[str, Any]:
+        return {"new_page_uri": None, "embedding_revision": None, "commit_sha": None}

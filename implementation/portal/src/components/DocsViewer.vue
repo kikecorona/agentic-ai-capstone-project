@@ -101,8 +101,43 @@
             {{ selectedPath || "(select a file)" }}
           </span>
           <q-space />
+          <!-- Edit toggle: in view mode → enter editor; in edit
+               mode → save (push to GitHub) and re-render. The save
+               button is disabled while a write is in flight so
+               accidental double-clicks don't queue two commits. -->
           <q-btn
-            v-if="selectedPath"
+            v-if="selectedPath && !editing"
+            flat
+            dense
+            icon="edit"
+            label="edit"
+            class="edit-btn q-mr-sm"
+            @click="startEdit"
+          />
+          <q-btn
+            v-if="editing"
+            flat
+            dense
+            icon="close"
+            label="cancel"
+            class="cancel-btn q-mr-sm"
+            :disable="saving"
+            @click="cancelEdit"
+          />
+          <q-btn
+            v-if="editing"
+            flat
+            dense
+            icon="save"
+            label="save"
+            color="accent"
+            class="save-btn q-mr-sm"
+            :loading="saving"
+            :disable="!editorDirty"
+            @click="saveEdit"
+          />
+          <q-btn
+            v-if="selectedPath && !editing"
             flat
             dense
             icon="open_in_new"
@@ -112,7 +147,7 @@
             class="open-btn"
           />
         </q-toolbar>
-        <q-scroll-area class="col">
+        <q-scroll-area v-if="!editing" class="col">
           <div v-if="contentLoading" class="q-pa-md">
             <q-spinner-puff color="accent" size="2em" />
             <span class="q-ml-sm">fetching…</span>
@@ -128,6 +163,22 @@
           </div>
           <article v-else class="markdown-body q-pa-lg" v-html="renderedHtml" />
         </q-scroll-area>
+        <div v-else class="col column no-wrap editor-pane">
+          <q-banner v-if="editError" class="bg-red-9 text-white">
+            <template v-slot:avatar><q-icon name="error" /></template>
+            {{ editError }}
+          </q-banner>
+          <textarea
+            ref="editorRef"
+            v-model="editorBody"
+            class="md-editor col"
+            spellcheck="false"
+          />
+          <div class="editor-footer">
+            saving to <code>{{ branch }}</code> ·
+            <code>{{ selectedPath }}</code>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -156,6 +207,7 @@ const props = defineProps({
 });
 
 const gh = inject("gh");
+const oc = inject("oc", null);
 const settings = useSettingsStore();
 
 // Where we are right now in the repo. Starts at basePath, changes via
@@ -167,6 +219,10 @@ const contentLoading = ref(false);
 const error = ref("");
 const selectedPath = ref("");
 const renderedHtml = ref("");
+// Raw markdown text alongside the rendered HTML so the manual
+// editor (Edit button on the Documentation tab) opens the actual
+// source instead of trying to recover Markdown from rendered HTML.
+const rawText = ref("");
 
 const branch = computed(() => settings.branch);
 
@@ -280,10 +336,13 @@ async function reload() {
   error.value = "";
   entries.value = [];
   try {
-    const res = await gh.get(
-      `/repos/${props.owner}/${props.repo}/contents/${encodeURI(currentPath.value)}`,
-      { params: { ref: branch.value } },
-    );
+    // Same reasoning as ``loadFile`` — proxy through the
+    // orchestrator's authenticated endpoint so a few clicks don't
+    // exhaust the 60 req/hour anonymous quota on api.github.com.
+    if (!oc) throw new Error("orchestrator client not provided");
+    const res = await oc.get("/v1/docs/list", {
+      params: { path: currentPath.value, ref: branch.value },
+    });
     if (!Array.isArray(res.data)) {
       throw new Error(`expected directory listing for ${currentPath.value}`);
     }
@@ -359,20 +418,38 @@ defineExpose({ openFile });
 async function loadFile(path) {
   contentLoading.value = true;
   renderedHtml.value = "";
+  rawText.value = "";
   try {
-    // raw.githubusercontent.com gives us the body directly without
-    // base64. Anonymous works for public repos.
-    const url = `https://raw.githubusercontent.com/${props.owner}/${props.repo}/${encodeURIComponent(branch.value)}/${path}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status} fetching raw ${path}`);
-    const text = await res.text();
+    // Route the read through the orchestrator's ``/v1/docs/raw``
+    // proxy. Two reasons:
+    //   * ``raw.githubusercontent.com`` sits behind Fastly with a
+    //     multi-minute CDN TTL that ignores ``?v=`` cache busts and
+    //     ``cache: no-store``, so the SME panel sees stale bodies
+    //     for several minutes after a patch.
+    //   * Going direct to ``api.github.com`` from the browser works
+    //     anonymously but eats into the 60 req/hour shared anon
+    //     limit fast (every render hits both the directory listing
+    //     and the file body), so a few SME replies in quick
+    //     succession produce 403s.
+    // The orchestrator authenticates with the same PAT the GitHub
+    // MCP uses, returns the file body verbatim, and isn't CDN-cached.
+    const ocClient = oc;
+    if (!ocClient) {
+      throw new Error("orchestrator client not provided");
+    }
+    const res = await ocClient.get("/v1/docs/raw", {
+      params: { path, ref: branch.value },
+    });
+    const text = typeof res.data?.content === "string" ? res.data.content : "";
+    rawText.value = text;
     renderedHtml.value = path.toLowerCase().endsWith(".md")
       ? marked.parse(text)
       : `<pre>${escapeHtml(text)}</pre>`;
   } catch (e) {
-    renderedHtml.value = `<pre class="text-negative">Error: ${escapeHtml(
-      e.message || String(e),
-    )}</pre>`;
+    const msg = e?.response?.status
+      ? `HTTP ${e.response.status} fetching ${path}`
+      : e.message || String(e);
+    renderedHtml.value = `<pre class="text-negative">Error: ${escapeHtml(msg)}</pre>`;
   } finally {
     contentLoading.value = false;
   }
@@ -382,6 +459,68 @@ async function loadFile(path) {
   // Vue to flush the v-html into the article, THEN render diagrams.
   await nextTick();
   await _renderMermaidBlocks();
+}
+
+// ─── Manual editor (Documentation tab) ─────────────────────────────
+// Lets the operator open the raw Markdown in a textarea, edit it,
+// and push the result to the configured branch via the orchestrator's
+// ``POST /v1/docs/edit`` endpoint (which round-trips through the
+// GitHub MCP). The render flips to the editor on ``Edit`` and back
+// to the rendered Markdown after a successful save.
+const editing = ref(false);
+const editorBody = ref("");
+const editorOriginal = ref("");
+const saving = ref(false);
+const editError = ref("");
+const editorRef = ref(null);
+
+const editorDirty = computed(() => editorBody.value !== editorOriginal.value);
+
+function startEdit() {
+  if (!selectedPath.value) return;
+  // Strip the rendered-error banner so the editor opens with empty
+  // content for files that failed to fetch — saving from that state
+  // would just overwrite the doc with the error text.
+  if (!rawText.value) {
+    editError.value = "no raw content available — refresh the page first";
+    return;
+  }
+  editorOriginal.value = rawText.value;
+  editorBody.value = rawText.value;
+  editError.value = "";
+  editing.value = true;
+}
+
+function cancelEdit() {
+  if (saving.value) return;
+  editing.value = false;
+  editorBody.value = "";
+  editorOriginal.value = "";
+  editError.value = "";
+}
+
+async function saveEdit() {
+  if (!editorDirty.value || !selectedPath.value || !oc) return;
+  saving.value = true;
+  editError.value = "";
+  try {
+    await oc.post("/v1/docs/edit", {
+      path: selectedPath.value,
+      content: editorBody.value,
+      branch: branch.value,
+    });
+    // Persist locally + flip back to view mode. The reload picks up
+    // the new content from raw.githubusercontent.com — adding a
+    // cache-bust query string forces a fresh fetch even though
+    // GitHub usually serves the new revision immediately.
+    rawText.value = editorBody.value;
+    editing.value = false;
+    await loadFile(selectedPath.value);
+  } catch (e) {
+    editError.value = e?.response?.data?.detail || e.message || "save failed";
+  } finally {
+    saving.value = false;
+  }
 }
 
 function escapeHtml(s) {
@@ -458,14 +597,24 @@ function formatSize(n) {
 }
 
 // Re-fetch when the operator switches branches, or when we mount with a
-// different basePath (BP vs SD tab).
+// different basePath. **Branch switch keeps both the current directory
+// and the selected file** so the operator can compare the same page
+// across branches without re-navigating; the directory + file content
+// are simply re-fetched against the new branch ref. ``basePath``
+// changes (BP vs SD pane in different mounts) reset the path because
+// the old path may not be valid under the new root.
 watch(
   branch,
   () => {
-    currentPath.value = props.basePath;
-    selectedPath.value = "";
-    renderedHtml.value = "";
-    reload();
+    // ``reload()`` lists a directory via the unauthenticated GitHub
+    // Contents API and would burn a 60-req/hour anon quota when the
+    // SME panel mounts (``hide-tree`` mode shows no tree, so the
+    // listing is wasted anyway). Only run it when the tree is on
+    // screen.
+    if (!props.hideTree) reload();
+    if (selectedPath.value) {
+      loadFile(selectedPath.value);
+    }
   },
   { immediate: true },
 );
@@ -475,7 +624,7 @@ watch(
     currentPath.value = newBase;
     selectedPath.value = "";
     renderedHtml.value = "";
-    reload();
+    if (!props.hideTree) reload();
   },
 );
 // Deep-link: on mount (and on subsequent changes via the route query
@@ -613,5 +762,37 @@ watch(
 .markdown-body :deep(.mermaid-rendered svg) {
   max-width: 100%;
   height: auto;
+}
+
+// ─── Manual editor ─────────────────────────────────────────────────
+.editor-pane {
+  background: var(--theme-bg-deep);
+}
+.md-editor {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: var(--theme-bg-deep);
+  color: var(--theme-text-primary);
+  padding: 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  white-space: pre;
+  // ``tab-size`` keeps Markdown indentation predictable in the editor.
+  tab-size: 2;
+}
+.editor-footer {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--theme-text-muted, #888);
+  padding: 6px 12px;
+  border-top: 1px solid var(--theme-bg-code);
+  background: var(--theme-bg-panel);
+}
+.editor-footer code {
+  background: transparent;
+  color: var(--theme-accent-secondary);
 }
 </style>

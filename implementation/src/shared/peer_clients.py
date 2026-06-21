@@ -119,11 +119,15 @@ class BPHttpClient:
         question_id: str,
         sme_text: str,
         originating_pages: list[str] | None = None,
+        topic: str | None = None,
+        question: str | None = None,
     ) -> dict[str, Any]:
         return self._mcp.call("ingest_sme_doc", {
             "question_id": question_id,
             "sme_text": sme_text,
             "originating_pages": originating_pages,
+            "topic": topic,
+            "question": question,
         }) or {}
 
     def close(self) -> None:
@@ -172,6 +176,23 @@ class SDHttpClient:
             "page_uri": page_uri,
             "question_id": question_id,
             "replacement": replacement,
+        }) or {}
+
+    def ingest_sme_doc(
+        self,
+        *,
+        question_id: str,
+        sme_text: str,
+        originating_pages: list[str] | None = None,
+        topic: str | None = None,
+        question: str | None = None,
+    ) -> dict[str, Any]:
+        return self._mcp.call("ingest_sme_doc", {
+            "question_id": question_id,
+            "sme_text": sme_text,
+            "originating_pages": originating_pages,
+            "topic": topic,
+            "question": question,
         }) or {}
 
     def close(self) -> None:

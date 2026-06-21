@@ -82,13 +82,20 @@ def build_server(
             repo=gh_repo,
             branch=env_url("GITHUB_BRANCH") or "main",
         )
-        # SD writes its pages under documentation/sd/. The "inputs"
-        # parameter on PageStore is unused by SDService (it only ever
-        # reads/writes pages), so we point it at an empty prefix.
+        # SD writes its pages under documentation/sd/. The page URIs
+        # the service constructs already start with ``sd/`` (see
+        # ``DEFAULT_PAGE_PREFIX = "sd/services/"``), so the
+        # page-store's ``pages_prefix`` only contributes the
+        # ``documentation`` root — anything more would double the
+        # ``sd/`` segment and land pages at
+        # ``documentation/sd/sd/services/...`` instead of the
+        # intended ``documentation/sd/services/...``. Same shape for
+        # ``inputs_prefix``: the SD service rarely reads inputs, but
+        # keeping the prefixes symmetric avoids surprises if it does.
         page_store = GitHubPageStore(
             github=github,
-            inputs_prefix=env_url("SD_INPUTS_GH_PATH") or "documentation/sd",
-            pages_prefix=env_url("SD_PAGES_GH_PATH") or "documentation/sd",
+            inputs_prefix=env_url("SD_INPUTS_GH_PATH") or "documentation",
+            pages_prefix=env_url("SD_PAGES_GH_PATH") or "documentation",
         )
         source_store = GitHubSourceStore(
             github=github,
@@ -194,6 +201,28 @@ def build_server(
     )
     def patch_page(page_uri: str, question_id: str, replacement: str) -> dict[str, Any]:
         return sd.patch_page(page_uri=page_uri, question_id=question_id, replacement=replacement)
+
+    @mcp.tool(
+        description=(
+            "Persist an SME reply as a new shared page under "
+            "documentation/sme-responses/; index it; record the doc-index "
+            "entry. Returns {new_page_uri, embedding_revision, commit_sha}."
+        ),
+    )
+    def ingest_sme_doc(
+        question_id: str,
+        sme_text: str,
+        originating_pages: list[str] | None = None,
+        topic: str | None = None,
+        question: str | None = None,
+    ) -> dict[str, Any]:
+        return sd.ingest_sme_doc(
+            question_id=question_id,
+            sme_text=sme_text,
+            originating_pages=originating_pages,
+            topic=topic,
+            question=question,
+        )
 
     return mcp, sd
 

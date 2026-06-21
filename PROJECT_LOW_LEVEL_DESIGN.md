@@ -552,12 +552,17 @@ Upstream callers (Portal, Update Trigger) are not LLM-driven, so the Orchestrato
 
 REST endpoints (versioned under `/v1`):
 
-- `POST /v1/queries` — body: `{ query, user_id, context }`. Picks B&P, SD, or both based on the
-  query, dispatches via the corresponding MCP, returns `{ status, answer, sources,
-  retrieval_trail }`. Synchronous; bounded by Auto-RAG's R=2.
-- `POST /v1/refresh` — body: `{ event_type, doc_id_or_commit_sha, change_kind, source }`. Used by
-  the Update Trigger (cron + GitHub webhook + Portal "refresh" button). Returns
-  `{ task_id, accepted_at }`. Asynchronous fan-out.
+- `POST /v1/queries` — body: `{ query, user_id, context, domain_hint? }`. Picks B&P, SD, or both
+  based on the query (or `domain_hint` when the caller wants to override the classifier),
+  dispatches via the corresponding MCP, and returns
+  `{ status, answer, sources, retrieval_trail, cross_references, dispatched_to }`. Synchronous;
+  bounded by Auto-RAG's R=2.
+- `POST /v1/refresh` — body:
+  `{ event_type, doc_id_or_commit_sha, change_kind, source, force?, domain? }`. Used by
+  the Update Trigger (cron + GitHub webhook + Portal "refresh" button). `force=true` bypasses
+  the per-domain `sources_inventory.is_unchanged()` short-circuit. `domain` is `"sd"` / `"bp"` /
+  `"both"` (default `"both"`); the portal uses per-domain calls so SD's SME questions appear
+  before BP's leg starts. Returns `{ task_id, accepted_at, status }`. Asynchronous fan-out.
 - `POST /v1/sme-replies` — body: `{ question_id, sme_id, sme_text }`. Runs `ingest_sme_reply`
   (persist new B&P doc → patch every originating page → re-index → clear queue entry) and returns
   `{ status, new_doc_uri, patched_pages }`.
@@ -576,6 +581,18 @@ Multi-Agents X-Ray drawer and the Dashboard:
 - `GET /v1/metrics?service=...&since=...&until=...` — passthrough to OTel `get_metrics`
   ([§9.6](#96-audit-and-observability-module-6)) plus an `llm` section sourced from the
   `llm_calls` audit table; the Dashboard polls this on a 5s interval.
+
+Two more endpoints back the Documentation tab's read/write loop:
+
+- `GET /v1/docs/list?path=...&ref=...` — authenticated directory listing for the doc tree.
+  Returns `[{ name, path, type, size }]`.
+- `GET /v1/docs/raw?path=...&ref=...` — server-side proxy for raw doc reads via the GitHub
+  Contents API. Avoids `raw.githubusercontent.com`'s multi-minute Fastly TTL (which would show
+  stale bodies after an SME patch) and the 60 req/hour anonymous limit on `api.github.com` from
+  the browser. Returns `{ path, branch, content }`.
+- `POST /v1/docs/edit` — body: `{ path, content, branch?, message? }`. Writes back through the
+  GitHub MCP. Out-of-tree paths (not under `documentation/`) → 400; non-GitHub deployments → 503.
+  Returns `{ path, branch, commit_sha, blob_sha }`.
 
 Auth and rate-limiting are out of POC scope but the endpoints are designed so adding them is a
 middleware change, not a contract change.
