@@ -570,11 +570,6 @@ REST endpoints (versioned under `/v1`):
 - `GET /v1/sme-questions?sme_id=...&status=pending` — list pending questions for an SME.
 - `GET /v1/sme-questions/{question_id}` — full detail incl. retrieval trail.
 - `GET /v1/tasks/{task_id}` — poll an async task.
-- `GET /v1/health` — liveness check.
-
-Two more endpoints colocated under `/v1/` are added by [§9.8](#98-documentation-portal) for the
-Multi-Agents X-Ray drawer and the Dashboard:
-
 - `GET /v1/streams/events` — server-sent events; merged tail of `service_logs` and `llm_calls` at
   `$AUDIT_DB_PATH`. Each event carries a `kind: "service" | "llm"` discriminator. The SSE id is
   composite (`s:N` / `l:N`) so the browser's `EventSource` resumes from the right cursor on
@@ -582,9 +577,6 @@ Multi-Agents X-Ray drawer and the Dashboard:
 - `GET /v1/metrics?service=...&since=...&until=...` — passthrough to OTel `get_metrics`
   ([§9.6](#96-audit-and-observability-module-6)) plus an `llm` section sourced from the
   `llm_calls` audit table; the Dashboard polls this on a 5s interval.
-
-Two more endpoints back the Documentation tab's read/write loop:
-
 - `GET /v1/docs/list?path=...&ref=...` — authenticated directory listing for the doc tree.
   Returns `[{ name, path, type, size }]`.
 - `GET /v1/docs/raw?path=...&ref=...` — server-side proxy for raw doc reads via the GitHub
@@ -594,6 +586,7 @@ Two more endpoints back the Documentation tab's read/write loop:
 - `POST /v1/docs/edit` — body: `{ path, content, branch?, message? }`. Writes back through the
   GitHub MCP. Out-of-tree paths (not under `documentation/`) → 400; non-GitHub deployments → 503.
   Returns `{ path, branch, commit_sha, blob_sha }`.
+- `GET /v1/health` — liveness check.
 
 Auth and rate-limiting are out of POC scope but the endpoints are designed so adding them is a
 middleware change, not a contract change.
@@ -612,6 +605,32 @@ with fewer nodes since there's no domain-specific reasoning.
 - **SME reply** — lands as a new B&P document and patches every page that carried the matching
   placeholder.
 
+```mermaid
+flowchart TD
+    Start([REST event]) --> Route[route<br/>classify event_type]
+    Route --> Kind{event_type?}
+    Kind -->|portal_query| Q[dispatch query<br/>BP / SD / both]
+    Kind -->|trigger_refresh| R[dispatch refresh<br/>per-domain rule]
+    Kind -->|sme_reply| S[ingest_sme_reply]
+    Q --> Merge[merge cross-specialist<br/>strongest status wins]
+    Merge --> Polish[polish<br/>prose-LLM final pass]
+    Polish --> Done([response to caller])
+    R --> Ack[ack_completion<br/>open SME envelope?]
+    Ack --> Done
+    S --> Patch[BP_MCP.ingest_sme_doc<br/>+ patch originating pages]
+    Patch --> Done
+    classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+    classDef llm fill: #E3F2FD, stroke: #1565C0, color: #0D47A1
+    classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
+    classDef boundary fill: #FFF9C4, stroke: #F57F17, color: #E65100
+    classDef sme fill: #FCE4EC, stroke: #AD1457, color: #880E4F
+    class Route,Q,R,Merge,Ack,Patch node
+    class Polish llm
+    class Kind decision
+    class Start,Done boundary
+    class S sme
+```
+
 **State.** Only `pending_sme_questions` survives between runs, keyed by `question_id` with
 `{topic, question, originating_pages, placeholder_id, best_guess, retrieval_trail,
 assigned_sme, posted_at}`. `originating_pages` is the set of pages carrying the matching
@@ -623,6 +642,37 @@ when it needs them.
 dispatch_to_sd, dispatch_to_both, ingest_sme_reply, ack_completion, done}`) → `act` → `observe`.
 Conditional edge loops back until the action returns `done`. Tight system prompt (~300 tokens)
 and a small action space keep it reliable on the local LLM.
+
+```mermaid
+%%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
+flowchart LR
+    Port([Portal query]) --> Route
+    Trig([Update Trigger]) --> Route
+    SME([SME reply]) --> Route
+    Route[route<br/>classify event] --> Reason[reason<br/>local LLM picks action]
+    Reason --> Act[act]
+    Act --> Pick{action?}
+    Pick -->|dispatch_to_bp| BP[BP_MCP.dispatch]
+    Pick -->|dispatch_to_sd| SD[SD_MCP.dispatch]
+    Pick -->|dispatch_to_both| Both[BP + SD parallel]
+    Pick -->|ingest_sme_reply| Ingest[ingest_sme_reply<br/>+ patch pages]
+    Pick -->|ack_completion| Ack[ack_completion<br/>+ SME queue update]
+    Pick -->|done| Out([response to caller])
+    BP --> Observe
+    SD --> Observe
+    Both --> Observe
+    Ingest --> Observe
+    Ack --> Observe
+    Observe[observe<br/>collect result] --> Reason
+    classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+    classDef llm fill: #E3F2FD, stroke: #1565C0, color: #0D47A1
+    classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
+    classDef boundary fill: #FFF9C4, stroke: #F57F17, color: #E65100
+    class Route,Act,BP,SD,Both,Ingest,Ack,Observe node
+    class Reason llm
+    class Pick decision
+    class Port,Trig,SME,Out boundary
+```
 
 **Pipeline nodes wrapped by the loop:**
 
@@ -648,6 +698,34 @@ and a small action space keep it reliable on the local LLM.
 6. **`ack_completion`** — marks the in-flight task complete; if the response is a background-mode
    escalation envelope, opens or updates the corresponding `pending_sme_questions` entry.
    Query-mode responses never carry an escalation envelope.
+
+**Query-mode merge & polish:**
+
+```mermaid
+flowchart TB
+    Start([portal_query]) --> Class[classify domain<br/>BP / SD / both]
+    Class --> Pick{single or both?}
+    Pick -->|single| Single[dispatch to one specialist]
+    Pick -->|both| Both[dispatch in parallel]
+    Single --> Wait[await response]
+    Both --> Wait
+    Wait --> StatusSelect[pick strongest status<br/>ok then low_confidence then exhausted]
+    StatusSelect --> Dedupe[dedupe sources<br/>by source_uri + domain]
+    Dedupe --> Collapse{near-identical<br/>answers?}
+    Collapse -->|yes| Lead[From BP + SD: body]
+    Collapse -->|no| Concat[keep both]
+    Lead --> Polish
+    Concat --> Polish[polish<br/>strip hedges + citations<br/>temperature 0]
+    Polish --> Out([answer to Portal])
+    classDef node fill: #E8F5E9, stroke: #2E7D32, color: #1B5E20
+    classDef llm fill: #E3F2FD, stroke: #1565C0, color: #0D47A1
+    classDef decision fill: #FFF3E0, stroke: #EF6C00, color: #E65100
+    classDef boundary fill: #FFF9C4, stroke: #F57F17, color: #E65100
+    class Class,Single,Both,Wait,StatusSelect,Dedupe,Lead,Concat node
+    class Polish llm
+    class Pick,Collapse decision
+    class Start,Out boundary
+```
 
 **Resumability.** Every node persists state before transitioning; a mid-refresh crash picks up on
 next start. Refresh fan-outs run specialists in parallel but preserve per-page ordering so
