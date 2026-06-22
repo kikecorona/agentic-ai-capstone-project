@@ -7,17 +7,35 @@
     <q-card-section class="col q-pa-md">
       <div v-if="!rows.length" class="empty">{{ emptyText }}</div>
 
-      <!-- bar: simple count visualisation -->
+      <!-- bar: count visualisation split into success / failure
+           segments (green / red). Rows are ``{key, success, failure,
+           value}``; ``value`` (= success + failure) is used to
+           normalise the row width across the panel. -->
       <div v-else-if="kind === 'bar'" class="bar-grid">
-        <div v-for="r in rows" :key="r.key" class="bar-row">
+        <div v-for="r in rows" :key="r.key" class="lat-row">
           <div class="bar-key" :title="r.key">{{ r.key }}</div>
           <div class="bar-track">
             <div
-              class="bar-fill"
-              :style="{ width: pct(r.value, maxCount) + '%' }"
+              v-if="r.success"
+              class="bar-fill bar-success"
+              :style="{ width: pct(r.success, maxCount) + '%' }"
+              :title="`success: ${r.success}`"
+            />
+            <div
+              v-if="r.failure"
+              class="bar-fill bar-failure"
+              :style="{
+                width: pct(r.failure, maxCount) + '%',
+                left: pct(r.success, maxCount) + '%',
+              }"
+              :title="`failure: ${r.failure}`"
             />
           </div>
-          <div class="bar-num">{{ r.value }}</div>
+          <div class="bar-num">
+            <span class="num-success">{{ r.success }}</span>
+            <span class="num-sep">/</span>
+            <span class="num-failure">{{ r.failure }}</span>
+          </div>
         </div>
       </div>
 
@@ -87,7 +105,10 @@ function pct(num, max) {
 
 const maxCount = computed(() =>
   props.kind === "bar"
-    ? Math.max(1, ...props.rows.map((r) => r.value || 0))
+    ? Math.max(
+        1,
+        ...props.rows.map((r) => (r.success || 0) + (r.failure || 0)),
+      )
     : 1,
 );
 
@@ -163,6 +184,16 @@ const maxLatency = computed(() =>
 }
 .bar-p95 {
   background: var(--theme-accent-primary);
+  z-index: 1;
+}
+// Span-counts split: green success behind, red failure stacked on top.
+// Same dual-segment layout the latency panel uses for p50/p95.
+.bar-success {
+  background: #2e7d32;
+  z-index: 2;
+}
+.bar-failure {
+  background: #c62828;
   z-index: 1;
 }
 .bar-num {
@@ -251,5 +282,12 @@ const maxLatency = computed(() =>
 }
 .status-completed {
   background: #2e7d32;
+}
+// Number colours for the span-counts success / failure split.
+.num-success {
+  color: #66bb6a;
+}
+.num-failure {
+  color: #ef5350;
 }
 </style>

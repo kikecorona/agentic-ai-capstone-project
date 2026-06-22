@@ -101,6 +101,34 @@
             {{ selectedPath || "(select a file)" }}
           </span>
           <q-space />
+          <!-- Back / forward across this viewer's local history of
+               visited (directory, file) pairs. Hidden while editing
+               so an accidental click doesn't blow away unsaved
+               edits. -->
+          <q-btn
+            v-if="!editing"
+            flat
+            dense
+            round
+            icon="arrow_back"
+            class="nav-btn q-mr-xs"
+            :disable="!canGoBack"
+            @click="goBack"
+          >
+            <q-tooltip class="bg-grey-9">back</q-tooltip>
+          </q-btn>
+          <q-btn
+            v-if="!editing"
+            flat
+            dense
+            round
+            icon="arrow_forward"
+            class="nav-btn q-mr-sm"
+            :disable="!canGoForward"
+            @click="goForward"
+          >
+            <q-tooltip class="bg-grey-9">forward</q-tooltip>
+          </q-btn>
           <!-- Edit toggle: in view mode → enter editor; in edit
                mode → save (push to GitHub) and re-render. The save
                button is disabled while a write is in flight so
@@ -232,6 +260,76 @@ const renderedHtml = ref("");
 const rawText = ref("");
 
 const branch = computed(() => settings.branch);
+
+// ─── Per-viewer navigation history ─────────────────────────────────
+// A linear stack of view states (``{ currentPath, selectedPath }``)
+// the operator has visited inside this viewer. Back/forward buttons
+// in the toolbar walk the index without touching the browser URL.
+// ``navigatingByHistory`` short-circuits ``pushHistory`` so back /
+// forward themselves don't append new entries.
+const history = ref([]);
+const historyIndex = ref(-1);
+const navigatingByHistory = ref(false);
+
+const canGoBack = computed(() => historyIndex.value > 0);
+const canGoForward = computed(
+  () => historyIndex.value >= 0 && historyIndex.value < history.value.length - 1,
+);
+
+function pushHistory() {
+  if (navigatingByHistory.value) return;
+  // Pages only — bare directory navigation (folder click, breadcrumb,
+  // ``..``) doesn't add an entry, so back/forward walks file visits.
+  if (!selectedPath.value) return;
+  const state = {
+    currentPath: currentPath.value,
+    selectedPath: selectedPath.value,
+  };
+  const last = history.value[historyIndex.value];
+  if (
+    last &&
+    last.currentPath === state.currentPath &&
+    last.selectedPath === state.selectedPath
+  ) {
+    return;
+  }
+  // Drop forward history when a new branch is taken from a back-state.
+  if (historyIndex.value < history.value.length - 1) {
+    history.value = history.value.slice(0, historyIndex.value + 1);
+  }
+  history.value.push(state);
+  historyIndex.value = history.value.length - 1;
+}
+
+async function applyHistoryState(state) {
+  navigatingByHistory.value = true;
+  try {
+    const dirChanged = state.currentPath !== currentPath.value;
+    currentPath.value = state.currentPath;
+    selectedPath.value = state.selectedPath;
+    if (dirChanged && !props.hideTree) await reload();
+    if (state.selectedPath) {
+      await loadFile(state.selectedPath);
+    } else {
+      renderedHtml.value = "";
+      rawText.value = "";
+    }
+  } finally {
+    navigatingByHistory.value = false;
+  }
+}
+
+function goBack() {
+  if (!canGoBack.value) return;
+  historyIndex.value -= 1;
+  applyHistoryState(history.value[historyIndex.value]);
+}
+
+function goForward() {
+  if (!canGoForward.value) return;
+  historyIndex.value += 1;
+  applyHistoryState(history.value[historyIndex.value]);
+}
 
 const canGoUp = computed(() => currentPath.value !== props.basePath);
 
@@ -379,6 +477,7 @@ function onClickEntry(entry) {
   } else {
     selectedPath.value = entry.path;
     loadFile(entry.path);
+    pushHistory();
   }
 }
 
@@ -418,6 +517,7 @@ function openFile(filePath) {
   }
   selectedPath.value = norm;
   loadFile(norm);
+  pushHistory();
 }
 
 defineExpose({ openFile });
@@ -678,6 +778,10 @@ watch(
     currentPath.value = newBase;
     selectedPath.value = "";
     renderedHtml.value = "";
+    // basePath flip means a different doc tree — drop history so the
+    // back button doesn't try to walk us back into the old root.
+    history.value = [];
+    historyIndex.value = -1;
     if (!props.hideTree) reload();
   },
 );

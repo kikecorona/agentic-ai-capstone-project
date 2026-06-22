@@ -329,11 +329,40 @@ const statusColor = computed(() => {
 });
 
 // ─── Per-method breakdowns (existing) ──────────────────────────────
-const countRows = computed(() =>
-  Object.entries(metrics.value.counts || {})
-    .map(([k, v]) => ({ key: k, value: v }))
-    .sort((a, b) => b.value - a.value),
-);
+// Service-level error: any status that isn't a known soft outcome.
+// Declared up here so ``countRows`` can reuse the same classification
+// the agent-metrics computeds below depend on.
+const SOFT_STATUSES = new Set([
+  "ok",
+  "unset",
+  "low_confidence",
+  "exhausted",
+  "no_match",
+  "fallback",
+  "escalation",
+]);
+
+// Each row carries both a ``success`` and a ``failure`` count derived
+// from ``status_counts`` (any non-soft status counts as failure). The
+// metrics-panel "bar" kind renders this as a green/red split. ``value``
+// (= success + failure) sticks around so the row sort and the "methods
+// seen" KPI keep working the same way they did pre-split.
+const countRows = computed(() => {
+  const out = [];
+  for (const [k, histo] of Object.entries(metrics.value.status_counts || {})) {
+    let success = 0,
+      failure = 0;
+    for (const [s, c] of Object.entries(histo || {})) {
+      if (SOFT_STATUSES.has(s)) success += c;
+      else failure += c;
+    }
+    const total = success + failure;
+    if (!total) continue;
+    out.push({ key: k, success, failure, value: total });
+  }
+  out.sort((a, b) => b.failure - a.failure || b.value - a.value);
+  return out;
+});
 
 const serviceCount = computed(() => {
   const set = new Set();
@@ -362,17 +391,6 @@ const statusRows = computed(() =>
 );
 
 // ─── §9.7 derived metrics — composed from status_counts/latency ────
-
-// Service-level error: any status that isn't a known soft outcome.
-const SOFT_STATUSES = new Set([
-  "ok",
-  "unset",
-  "low_confidence",
-  "exhausted",
-  "no_match",
-  "fallback",
-  "escalation",
-]);
 
 const errorCount = computed(() => {
   let n = 0;
