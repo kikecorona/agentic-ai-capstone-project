@@ -330,16 +330,33 @@ const statusColor = computed(() => {
 
 // ─── Per-method breakdowns (existing) ──────────────────────────────
 // Service-level error: any status that isn't a known soft outcome.
-// Declared up here so ``countRows`` can reuse the same classification
-// the agent-metrics computeds below depend on.
+// "Soft" = an expected, non-error result emitted somewhere in the
+// system. Anything else (`error`, `failed`, an unrecognised string)
+// counts as a failure for the success/failure split. Keep this in
+// sync with ``MetricsPanel.vue``'s ``.status-*`` styles — the styled
+// statuses are exactly the ones we know are intentional outcomes.
 const SOFT_STATUSES = new Set([
+  // RAG / orchestrator success outcomes
   "ok",
   "unset",
   "low_confidence",
   "exhausted",
   "no_match",
   "fallback",
+  // Dispatch / SME escalation (intentional, not an error)
   "escalation",
+  "escalations_emitted",
+  // §9.2 / §9.3 enrich-pipeline outcomes
+  "enriched",
+  "escalated_only",
+  "unchanged",
+  "stub_created",
+  "page_deleted",
+  "not_found",
+  // Orchestrator /v1/tasks lifecycle
+  "accepted",
+  "in_progress",
+  "completed",
 ]);
 
 // Each row carries both a ``success`` and a ``failure`` count derived
