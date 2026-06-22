@@ -11,9 +11,9 @@
       <q-toolbar>
         <q-toolbar-title>
           <q-avatar>
-            <img src="/logo/logo-mono-white.svg" alt="Pear Store logo" />
+            <img src="/logo/logo-mono-white.svg" alt="Logo" />
           </q-avatar>
-          <span class="retro-display">Pear Store · Documentation Portal</span>
+          <span class="retro-display">Documentation Portal</span>
           <!-- Theme toggle. Sits inline with the title so it's
                immediately accessible — orange ↔ phosphor green. -->
           <q-btn
@@ -104,11 +104,8 @@
     <q-footer bordered class="bg-grey-10 text-white">
       <q-toolbar>
         <q-toolbar-title>
-          <q-avatar>
-            <img src="/logo/logo-mono-white.svg" alt="Pear Store logo" />
-          </q-avatar>
           <span class="retro-footer">
-            Pear Store POC · {{ ocBase }}
+            Agentic AI Capstone Project - Enrique Corona
           </span>
         </q-toolbar-title>
       </q-toolbar>
