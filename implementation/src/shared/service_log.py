@@ -9,7 +9,7 @@ Schema::
 
     service_logs(
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        module      TEXT NOT NULL,         -- e.g. "rag.service", "rag.auto_rag"
+        module      TEXT NOT NULL,         -- e.g. "rag.service", "bp.compose", "sd.analyze_code"
         level       TEXT NOT NULL,         -- "debug" | "info" | "warn" | "error"
         timestamp   REAL NOT NULL,         -- unix epoch seconds (UTC)
         message     TEXT NOT NULL

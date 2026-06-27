@@ -38,7 +38,7 @@ from .service import SDService
 from .sources import GitHubSourceStore, LocalSourceStore
 from .store import SDDocIndex, SDSourcesInventory, default_db_path
 
-log = get_logger("rag.sd.server")
+log = get_logger("sd.server")
 
 
 def build_server(

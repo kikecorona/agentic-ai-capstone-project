@@ -66,7 +66,7 @@ from .clients import InProcessBPClient, StubSDClient
 from .service import OrchestratorService
 from .state import OrchestratorState, default_db_path as default_oc_db_path
 
-log = get_logger("rag.oc.server")
+log = get_logger("oc.server")
 
 
 # ---------------------------------------------------------------------------

@@ -39,7 +39,7 @@ from src.shared.service_log import get_logger
 
 from .sources import SourceFile, SourceStore
 
-log = get_logger("rag.sd.analyze_code")
+log = get_logger("sd.analyze_code")
 
 
 # ---------------------------------------------------------------------------

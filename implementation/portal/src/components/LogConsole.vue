@@ -25,6 +25,22 @@
             {{ filters[f.key] ? "Hide" : "Show" }} {{ f.label }} events
           </q-tooltip>
         </q-btn>
+        <q-separator vertical inset class="q-mx-sm filter-sep" />
+        <q-btn
+          v-for="t in TIME_DEFS"
+          :key="t.value"
+          dense
+          no-caps
+          :flat="timeFilter !== t.value"
+          :outline="timeFilter !== t.value"
+          :color="timeFilter === t.value ? 'purple-4' : 'grey-7'"
+          :text-color="timeFilter === t.value ? 'dark' : undefined"
+          :label="t.label"
+          class="filter-btn"
+          @click="timeFilter = t.value"
+        >
+          <q-tooltip class="bg-grey-9">Show last {{ t.label }} of events</q-tooltip>
+        </q-btn>
       </div>
       <q-space />
       <q-chip dense square :color="statusColor" text-color="dark">
@@ -37,95 +53,103 @@
         </span>
       </q-chip>
     </q-toolbar>
-    <q-scroll-area class="col scroll-area">
-      <div class="log-body">
-        <!-- Descending order — newest event sits at the top so the
-             operator never has to scroll to see what just happened.
-             Each row is clickable and pops a dialog with the full text.
-             Each event carries a ``kind`` discriminator (set server-side
-             by /v1/streams/events) so the same component renders both
-             service-log rows and LLM-call rows. -->
-        <div
-          v-for="ev in reversedEvents"
-          :key="rowKey(ev)"
-          class="log-line"
-          :class="lineClass(ev)"
-          @click="openDetail(ev)"
-        >
-          <span class="ts">{{ formatTs(ev) }}</span>
-          <span class="lvl" :class="levelClass(ev)">
-            <q-icon
-              :name="ev.kind === 'llm' ? 'smart_toy' : 'description'"
-              size="14px"
-              class="row-icon"
-            />
-            {{ levelLabel(ev) }}
-          </span>
-          <span class="mod">{{ ev.module }}</span>
-          <span class="msg">{{ formatMessage(ev) }}</span>
-          <span v-if="ev.error" class="err">!{{ ev.error }}</span>
+    <!-- Split content area: left = event list, right = latest-event detail -->
+    <div class="log-split col row no-wrap">
+      <q-scroll-area class="log-list-pane">
+        <div class="log-body">
+          <!-- Descending order — newest event sits at the top so the
+               operator never has to scroll to see what just happened.
+               Each row is clickable and pops a dialog with the full text.
+               The first row (latest) is highlighted and its detail is
+               shown inline in the right pane. -->
+          <div
+            v-for="(ev, idx) in reversedEvents"
+            :key="rowKey(ev)"
+            class="log-line"
+            :class="[lineClass(ev), { 'log-line--latest': rowKey(ev) === displayKey }]"
+            @click="selectEvent(ev)"
+          >
+            <span class="ts">{{ formatTs(ev) }}</span>
+            <span class="lvl" :class="levelClass(ev)">
+              <q-icon
+                :name="ev.kind === 'llm' ? 'smart_toy' : 'description'"
+                size="14px"
+                class="row-icon"
+              />
+              {{ levelLabel(ev) }}
+            </span>
+            <span class="mod">{{ ev.module }}</span>
+            <span class="msg">{{ formatMessage(ev) }}</span>
+            <span v-if="ev.error" class="err">!{{ ev.error }}</span>
+          </div>
+          <div v-if="events.length === 0" class="empty-line">
+            (waiting for events…)
+          </div>
         </div>
-        <div v-if="events.length === 0" class="empty-line">
-          (waiting for events…)
-        </div>
-      </div>
-    </q-scroll-area>
+      </q-scroll-area>
 
-    <!-- Click-to-detail dialog. Layout switches based on the captured
-         event's ``kind`` — service rows show level + message, LLM rows
-         show model / latency / request / response / error. -->
-    <q-dialog v-model="detailOpen">
-      <q-card class="detail-card">
-        <q-toolbar class="bg-grey-9 text-white">
-          <q-icon name="terminal" class="q-mr-sm" />
-          <span class="title">
-            {{ detail?.kind === "llm" ? "LLM call" : "service log" }}
-            · #{{ detail?.id }}
-          </span>
-          <q-space />
-          <q-btn flat dense round icon="close" v-close-popup />
-        </q-toolbar>
-        <q-card-section v-if="detail" class="detail-meta">
-          <div class="meta-grid">
-            <div class="meta-key">timestamp</div>
-            <div class="meta-val">{{ formatTsFull(detail) }}</div>
-            <div class="meta-key">module</div>
-            <div class="meta-val">{{ detail.module }}</div>
-            <template v-if="detail.kind === 'service'">
-              <div class="meta-key">level</div>
-              <div class="meta-val">{{ detail.level }}</div>
+      <q-separator vertical color="grey-8" />
+
+      <!-- Right pane: always shows the latest (top) event's full detail. -->
+      <div class="log-detail-pane column no-wrap">
+        <template v-if="displayEvent">
+          <div class="detail-pane-header">
+            <q-icon
+              :name="displayEvent.kind === 'llm' ? 'smart_toy' : 'description'"
+              size="14px"
+              class="q-mr-xs"
+            />
+            <span class="detail-pane-title">
+              {{ displayEvent.kind === "llm" ? "LLM call" : "service log" }}
+              · #{{ displayEvent.id }}
+            </span>
+          </div>
+          <div class="detail-meta-inline">
+            <div class="meta-grid">
+              <div class="meta-key">timestamp</div>
+              <div class="meta-val">{{ formatTsFull(displayEvent) }}</div>
+              <div class="meta-key">module</div>
+              <div class="meta-val">{{ displayEvent.module }}</div>
+              <template v-if="displayEvent.kind === 'service'">
+                <div class="meta-key">level</div>
+                <div class="meta-val">{{ displayEvent.level }}</div>
+              </template>
+              <template v-else>
+                <div class="meta-key">model</div>
+                <div class="meta-val">{{ displayEvent.model }}</div>
+                <div class="meta-key">temperature</div>
+                <div class="meta-val">{{ displayEvent.temperature ?? "—" }}</div>
+                <div class="meta-key">json mode</div>
+                <div class="meta-val">{{ displayEvent.json_mode ? "yes" : "no" }}</div>
+                <div class="meta-key">latency</div>
+                <div class="meta-val">{{ Math.round(displayEvent.latency_ms || 0) }} ms</div>
+              </template>
+            </div>
+          </div>
+          <q-separator color="grey-8" />
+          <div class="detail-body-inline col">
+            <template v-if="displayEvent.kind === 'service'">
+              <div class="section-label">message</div>
+              <pre class="detail-pre">{{ displayEvent.message || "(empty)" }}</pre>
             </template>
             <template v-else>
-              <div class="meta-key">model</div>
-              <div class="meta-val">{{ detail.model }}</div>
-              <div class="meta-key">temperature</div>
-              <div class="meta-val">{{ detail.temperature ?? "—" }}</div>
-              <div class="meta-key">json mode</div>
-              <div class="meta-val">{{ detail.json_mode ? "yes" : "no" }}</div>
-              <div class="meta-key">latency</div>
-              <div class="meta-val">{{ Math.round(detail.latency_ms || 0) }} ms</div>
+              <div class="section-label">request</div>
+              <pre class="detail-pre">{{ formatMaybeJson(displayEvent.request) }}</pre>
+              <div class="section-label q-mt-md">response</div>
+              <pre class="detail-pre">{{ formatMaybeJson(displayEvent.response) }}</pre>
+              <template v-if="displayEvent.error">
+                <div class="section-label q-mt-md error-label">error</div>
+                <pre class="detail-pre detail-err">{{ displayEvent.error }}</pre>
+              </template>
             </template>
           </div>
-        </q-card-section>
-        <q-separator />
-        <q-card-section v-if="detail" class="detail-body">
-          <template v-if="detail.kind === 'service'">
-            <div class="section-label">message</div>
-            <pre class="detail-pre">{{ detail.message || "(empty)" }}</pre>
-          </template>
-          <template v-else>
-            <div class="section-label">request</div>
-            <pre class="detail-pre">{{ formatMaybeJson(detail.request) }}</pre>
-            <div class="section-label q-mt-md">response</div>
-            <pre class="detail-pre">{{ formatMaybeJson(detail.response) }}</pre>
-            <template v-if="detail.error">
-              <div class="section-label q-mt-md error-label">error</div>
-              <pre class="detail-pre detail-err">{{ detail.error }}</pre>
-            </template>
-          </template>
-        </q-card-section>
-      </q-card>
-    </q-dialog>
+        </template>
+        <div v-else class="detail-empty">
+          (no events yet)
+        </div>
+      </div>
+    </div>
+
   </q-card>
 </template>
 
@@ -149,6 +173,13 @@ const FILTER_DEFS = [
   { key: "llm", label: "llm", color: "positive" },
 ];
 const filters = reactive({ info: true, warn: true, error: true, llm: true });
+
+const TIME_DEFS = [
+  { label: "1 hr",  value: 3600 },
+  { label: "1 day", value: 86400 },
+  { label: "All",   value: 0 },
+];
+const timeFilter = ref(86400);
 
 function passes(ev) {
   if (ev.kind === "llm") {
@@ -174,7 +205,12 @@ function passes(ev) {
 // by timestamp puts every event in the right place regardless of
 // when it arrived. The filter doesn't affect order.
 const reversedEvents = computed(() => {
-  const items = [...props.events];
+  const now = Date.now() / 1000;
+  const cutoff = timeFilter.value > 0 ? now - timeFilter.value : 0;
+  const items = [...props.events].filter(ev => {
+    const t = ev.timestamp ?? ev.started_at ?? 0;
+    return t >= cutoff;
+  });
   items.sort((a, b) => {
     const ta = a.timestamp ?? a.started_at ?? 0;
     const tb = b.timestamp ?? b.started_at ?? 0;
@@ -185,15 +221,14 @@ const reversedEvents = computed(() => {
 
 const filteredCount = computed(() => reversedEvents.value.length);
 
-// Click-to-detail state — separate `detail` ref so the dialog can keep
-// rendering the captured event even when the underlying events array
-// rolls past the buffer cap.
-const detail = ref(null);
-const detailOpen = ref(false);
+// Selected event — null means "track latest automatically". Clicking a
+// row pins to that event; the highlight and right pane follow the selection.
+const selectedEvent = ref(null);
+const displayEvent = computed(() => selectedEvent.value ?? reversedEvents.value[0] ?? null);
+const displayKey = computed(() => displayEvent.value ? rowKey(displayEvent.value) : null);
 
-function openDetail(ev) {
-  detail.value = ev;
-  detailOpen.value = true;
+function selectEvent(ev) {
+  selectedEvent.value = ev;
 }
 
 // Vue v-for key: kind+id avoids collisions across the two source
@@ -329,13 +364,70 @@ function formatMaybeJson(raw) {
   text-transform: uppercase;
   border-radius: 3px;
 }
+.filter-sep {
+  background: #555;
+  height: 16px;
+  align-self: center;
+}
 .of-total {
   color: var(--theme-text-muted, #888);
   margin-left: 2px;
   font-size: 0.7rem;
 }
-.scroll-area {
+.log-split {
+  overflow: hidden;
+}
+.log-list-pane {
+  width: 50%;
+  min-width: 280px;
+  height: 100%;
   background: var(--theme-bg-deep);
+}
+.log-detail-pane {
+  flex: 1;
+  min-width: 0;
+  background: var(--theme-bg-page);
+  overflow: hidden;
+}
+.detail-pane-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--theme-bg-panel);
+  border-bottom: 1px solid var(--theme-bg-code);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+  color: #aaa;
+  flex-shrink: 0;
+}
+.detail-pane-title {
+  font-family: "VT323", "JetBrains Mono", monospace;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  color: var(--theme-text-primary);
+}
+.detail-meta-inline {
+  background: var(--theme-bg-panel);
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+.detail-body-inline {
+  padding: 10px 12px;
+  overflow-y: auto;
+  background: var(--theme-bg-deep);
+}
+.detail-empty {
+  color: #555;
+  font-style: italic;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8rem;
+  padding: 16px 12px;
+}
+.log-line--latest {
+  background: rgba(255, 107, 53, 0.15);
+  border-left: 2px solid var(--theme-accent-primary);
+  padding-left: calc(0px);
 }
 .log-body {
   font-family: "JetBrains Mono", monospace;
@@ -410,28 +502,7 @@ function formatMaybeJson(raw) {
   font-style: italic;
 }
 
-// ──────────────────────────────────────────── click-to-detail dialog
-.detail-card {
-  // Match the rest of the X-Ray panel — dark background, orange
-  // accent border, retro-font headings — instead of Quasar's default
-  // white q-card surface that bleeds through otherwise.
-  background: var(--theme-bg-page);
-  color: var(--theme-text-primary);
-  border: 1px solid var(--theme-accent-primary);
-  width: min(720px, 92vw);
-  max-width: 92vw;
-  font-family: "JetBrains Mono", monospace;
-}
-.detail-card .title {
-  font-family: "VT323", "JetBrains Mono", monospace;
-  font-size: 1.05rem;
-  letter-spacing: 0.05em;
-}
-.detail-meta {
-  background: var(--theme-bg-panel);
-  padding: 12px 16px;
-  font-size: 0.85rem;
-}
+// ──────────────────────────────────────────── inline detail pane
 .meta-grid {
   display: grid;
   grid-template-columns: 110px 1fr;
@@ -447,12 +518,6 @@ function formatMaybeJson(raw) {
 .meta-val {
   color: var(--theme-text-primary);
   word-break: break-word;
-}
-.detail-body {
-  background: var(--theme-bg-deep);
-  padding: 12px 16px;
-  max-height: 60vh;
-  overflow-y: auto;
 }
 .section-label {
   color: var(--theme-accent-secondary);

@@ -45,7 +45,7 @@ from .pages import GitHubPageStore, LocalPageStore
 from .service import BPService
 from .store import BPDocIndex, BPSourcesInventory, default_db_path
 
-log = get_logger("rag.bp.server")
+log = get_logger("bp.server")
 
 
 def _load_sd_mapping(path: str | os.PathLike[str] | None) -> dict[str, list[dict[str, Any]]]:

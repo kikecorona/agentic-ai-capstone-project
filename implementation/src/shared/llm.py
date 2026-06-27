@@ -69,6 +69,7 @@ def _build_chat_llm(temperature: float, json_mode: bool) -> ChatOllama:
         "model": llm_model(),
         "base_url": ollama_host(),
         "temperature": temperature,
+        "request_timeout": 60.0,
     }
     if json_mode:
         kwargs["format"] = "json"

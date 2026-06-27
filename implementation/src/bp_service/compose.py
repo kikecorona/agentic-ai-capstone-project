@@ -40,7 +40,7 @@ from src.shared.service_log import get_logger
 
 from .clients import SDClient
 
-log = get_logger("rag.bp.compose")
+log = get_logger("bp.compose")
 
 
 # ---------------------------------------------------------------------------

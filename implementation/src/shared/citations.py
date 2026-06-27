@@ -10,13 +10,10 @@ instead of clickable references.
 
 :func:`link_citations` rewrites the answer for the doc-page consumer:
 
-  * any LLM-emitted ``SOURCES:`` / ``Sources:`` footer is stripped first
-    (we replace it with our own well-formatted one);
+  * any LLM-emitted ``SOURCES:`` / ``Sources:`` footer is stripped;
   * each ``[Sn]`` marker (and grouped ``[Sn, Sm]`` markers) is rewritten
     as ``[Sn](relative/path/to/source.md)`` so the citation is clickable
-    inline;
-  * a ``**Sources:**`` Markdown footer is appended listing every
-    referenced ``[Sn]`` with its full URI and the same relative link.
+    inline.
 
 Query-mode answers MUST NOT call this — the chat polish pass already
 removes the markers and would just see the new ``](path)`` fragments.
@@ -143,30 +140,7 @@ def link_citations(
         return ", ".join(parts) if parts else ""
 
     rewritten = _INLINE_MARKER_RX.sub(_replace, cleaned)
-    rewritten = re.sub(r"[ \t]{2,}", " ", rewritten).rstrip()
-
-    # 3) Append our own Sources footer for every marker that survived
-    #    the rewrite, in ascending order, deduped.
-    referenced = sorted({
-        int(n)
-        for n in re.findall(r"\[S(\d+)\]", rewritten)
-    })
-    if not referenced:
-        return rewritten
-
-    footer_lines: list[str] = []
-    for n in referenced:
-        if not (1 <= n <= len(links)):
-            continue
-        full, rel = links[n - 1]
-        if rel:
-            footer_lines.append(f"- **[S{n}]** [`{full}`]({rel})")
-        elif full:
-            footer_lines.append(f"- **[S{n}]** `{full}`")
-
-    if not footer_lines:
-        return rewritten
-    return rewritten + "\n\n**Sources:**\n" + "\n".join(footer_lines) + "\n"
+    return re.sub(r"[ \t]{2,}", " ", rewritten).rstrip()
 
 
 # ---------------------------------------------------------------------------

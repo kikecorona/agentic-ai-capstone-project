@@ -63,7 +63,7 @@ from .store import (
 )
 from .tot_dep_graph import select_dep_graph
 
-log = get_logger("rag.sd.service")
+log = get_logger("sd.service")
 
 SERVICE_NAME = "sd_service"
 DEFAULT_PAGE_PREFIX = "sd/services/"

@@ -72,7 +72,7 @@ from .ingest import normalize_input
 from .pages import PageStore
 from .store import BPDocIndex, BPSourcesInventory, DocIndexEntry, default_db_path
 
-log = get_logger("rag.bp.service")
+log = get_logger("bp.service")
 
 SERVICE_NAME = "bp_service"
 

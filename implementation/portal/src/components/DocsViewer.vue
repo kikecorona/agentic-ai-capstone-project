@@ -19,7 +19,7 @@
 
     <div class="row col grow no-wrap">
       <!-- ─── Left pane: directory listing ─────────────────────────── -->
-      <div v-if="!hideTree" class="docs-tree col-3 column">
+      <div v-if="!hideTree" class="docs-tree column">
         <q-toolbar class="bg-grey-9 text-white">
           <q-icon name="folder_open" class="q-mr-sm" />
           <q-breadcrumbs class="path-label" active-color="white">
@@ -824,6 +824,9 @@ watch(
   height: calc(100vh - 200px);
 }
 .docs-tree {
+  width: 20%;
+  min-width: 160px;
+  flex-shrink: 0;
   background: var(--theme-bg-panel);
   color: var(--theme-text-primary);
 }

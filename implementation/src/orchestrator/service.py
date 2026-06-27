@@ -36,7 +36,8 @@ from .routing import (
 )
 from .state import OrchestratorState, PendingQuestion, Task, default_db_path
 
-log = get_logger("rag.oc.service")
+log = get_logger("oc.service")
+_log_polish = get_logger("oc.chat.polish")
 SERVICE_NAME = "orchestrator"
 
 
@@ -205,7 +206,7 @@ class OrchestratorService:
                             dispatched_to=merged.dispatched_to,
                         )
                 except Exception as exc:  # noqa: BLE001
-                    log.warn(f"polish_chat_answer failed (non-fatal): {exc}")
+                    _log_polish.warn(f"polish_chat_answer failed (non-fatal): {exc}")
             span.set_status(merged.status)
             span.set_payload_summary({
                 "specialists": [r["specialist"] for r in results],
@@ -729,7 +730,7 @@ def _polish_chat_answer(answer: str, query: str) -> str:
     if not answer or not answer.strip():
         return answer
     llm = get_chat_llm(
-        module="orchestrator.chat.polish",
+        module="oc.chat.polish",
         temperature=0.0,
         json_mode=False,
     )

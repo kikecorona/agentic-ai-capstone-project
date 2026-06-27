@@ -280,12 +280,12 @@ const events = ref([]);
 const status = ref("connecting…");
 const paused = ref(false);
 
-const MAX_BUFFER = 500;
+const MAX_BUFFER = 5000;
 
 let src = null;
 
 function openStream() {
-  const url = `${ocBase}/v1/streams/events?since_seconds_ago=3600`;
+  const url = `${ocBase}/v1/streams/events?since_seconds_ago=86400`;
   console.info(`[XRay] opening SSE → ${url}`);
   const es = new EventSource(url);
   status.value = "connecting…";

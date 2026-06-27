@@ -140,8 +140,8 @@ const xrayOpen = ref(false);
 // so the operator's preferred size survives reloads. Bounds keep the
 // drawer usable across screen sizes — too narrow and timestamps wrap;
 // too wide and the page content disappears.
-const XRAY_DEFAULT_WIDTH = 540;
-const XRAY_MIN_WIDTH = 320;
+const XRAY_DEFAULT_WIDTH = Math.round(window.innerWidth * 0.8);
+const XRAY_MIN_WIDTH = Math.round(window.innerWidth * 0.8);
 const XRAY_MAX_WIDTH = 1400;
 
 function loadStoredWidth() {

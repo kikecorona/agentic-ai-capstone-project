@@ -21,7 +21,7 @@ from src.shared.service_log import get_logger
 
 from .analyze_code import DownstreamCall, ServiceAnalysis
 
-log = get_logger("rag.sd.tot_dep_graph")
+log = get_logger("sd.tot_dep_graph")
 
 
 # ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ from src.shared.service_log import get_logger
 from .analyze_code import Endpoint, ServiceAnalysis
 from .tot_dep_graph import DepEdge, ToTResult
 
-log = get_logger("rag.sd.compose")
+log = get_logger("sd.compose")
 
 
 # ---------------------------------------------------------------------------
