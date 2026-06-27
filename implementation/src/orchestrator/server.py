@@ -803,8 +803,8 @@ def _agent_quality_rollup() -> dict[str, Any]:
         oc_db = os.environ.get("OC_DB_PATH", str(_oc_default()))
         oc_state = OrchestratorState(oc_db) if Path(oc_db).exists() else None
         if oc_state is not None:
-            answered = oc_state.list_questions(answered=True, limit=10_000)
-            pending = oc_state.list_questions(pending=True, limit=10_000)
+            answered = oc_state.list_questions(status="answered", limit=10_000)
+            pending = oc_state.list_questions(status="pending", limit=10_000)
             durations = sorted(
                 (q.answered_at - q.posted_at)
                 for q in answered

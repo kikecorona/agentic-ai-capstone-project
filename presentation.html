@@ -155,6 +155,23 @@
   .mwrap svg .note { fill: #FFF9C4 !important; stroke: #F57F17 !important; }
   .mwrap svg .activation0, .mwrap svg .activation1, .mwrap svg .activation2 { fill: #E3F2FD !important; stroke: #1565C0 !important; }
   .mwrap svg .loopLine, .mwrap svg .loopText { stroke: #EF6C00 !important; fill: #FFF3E0 !important; }
+  /* Thicker edges */
+  .mwrap svg .flowchart-link,
+  .mwrap svg path.path,
+  .mwrap svg .edge path,
+  .mwrap svg line.divider { stroke-width: 5px !important; }
+  /* Thicker node borders */
+  .mwrap svg .node rect,
+  .mwrap svg .node polygon,
+  .mwrap svg .node circle,
+  .mwrap svg .node ellipse,
+  .mwrap svg .node path { stroke-width: 3.5px !important; }
+  /* Bigger text inside diagrams */
+  .mwrap svg text,
+  .mwrap svg text tspan { font-size: 20px !important; }
+  .mwrap svg foreignObject div,
+  .mwrap svg foreignObject p,
+  .mwrap svg foreignObject span { font-size: 19px !important; }
 
   /* ── ZOOM CONTROLS — sits in a wrapper div outside the scrollable mwrap ── */
   .zoom-bar {
@@ -245,7 +262,7 @@
      SLIDE 1 — TITLE
 ═══════════════════════════ -->
 <div class="slide active" id="slide-1">
-  <div class="slide-num">1 / 22</div>
+  <div class="slide-num">1 / 23</div>
   <div style="flex:1; display:flex; flex-direction:column; justify-content:center;">
     <div class="sec-hdr">
       <div class="line"></div>
@@ -276,9 +293,10 @@
      SLIDE 2 — OBJECTIVES
 ═══════════════════════════ -->
 <div class="slide" id="slide-2">
-  <div class="slide-num">2 / 22</div>
-  <div class="label bb">Objectives</div>
-  <h2>What We Set Out to Build</h2>
+  <div class="slide-num">2 / 23</div>
+  <div class="label b">Project Overview</div>
+  <h2>Objectives</h2>
+  <p class="lead" style="margin-bottom:20px;">What We Set Out to Build</p>
   <div class="obj-grid">
     <div class="obj-item">
       <div class="obj-num">01</div>
@@ -317,7 +335,7 @@
      SLIDE 3 — PRINCIPLES
 ═══════════════════════════ -->
 <div class="slide" id="slide-3">
-  <div class="slide-num">3 / 22</div>
+  <div class="slide-num">3 / 23</div>
   <div class="label ab">Design Principles</div>
   <h2>Guiding Principles for the Agent</h2>
   <div class="prin-grid">
@@ -358,7 +376,7 @@
      SLIDE 4 — PROBLEM & CONTEXT
 ═══════════════════════════ -->
 <div class="slide" id="slide-4">
-  <div class="slide-num">4 / 22</div>
+  <div class="slide-num">4 / 23</div>
   <div class="label r">Context</div>
   <h2>Problem &amp; Four-Agent Architecture</h2>
   <div class="cols c2" style="gap:20px; flex:1; align-content:start;">
@@ -404,7 +422,7 @@
      SLIDE 5 — PEAR STORE SETUP
 ═══════════════════════════ -->
 <div class="slide" id="slide-5">
-  <div class="slide-num">5 / 22</div>
+  <div class="slide-num">5 / 23</div>
   <div class="label r">Experiment Setup</div>
   <h2>Pear Store — Synthetic Test Corpus</h2>
   <div class="cols c2" style="gap:24px; flex:1; align-content:start;">
@@ -451,7 +469,7 @@
      SLIDE 6 — PEAR STORE DOC LEVELS
 ═══════════════════════════ -->
 <div class="slide" id="slide-6">
-  <div class="slide-num">6 / 22</div>
+  <div class="slide-num">6 / 23</div>
   <div class="label r">Experiment Setup</div>
   <h2>Pear Store — Documentation Levels</h2>
   <div class="cols c2" style="gap:24px; flex:1; align-content:start;">
@@ -499,7 +517,7 @@
      SLIDE 5 — HIGH-LEVEL ARCH
 ═══════════════════════════ -->
 <div class="slide" id="slide-7">
-  <div class="slide-num">7 / 22</div>
+  <div class="slide-num">7 / 23</div>
   <div class="label">Architecture</div>
   <h2>High-Level Architecture Diagram</h2>
   <div class="mwrap scroll" style="flex:1;" data-zoom="2.5">
@@ -595,7 +613,7 @@ flowchart LR
      SLIDE 6 — AUTO-RAG LOOP
 ═══════════════════════════ -->
 <div class="slide" id="slide-8">
-  <div class="slide-num">8 / 22</div>
+  <div class="slide-num">8 / 23</div>
   <div class="label r">RAG Service</div>
   <h2>Auto-RAG Loop — Self-Correcting Retrieval</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
@@ -660,7 +678,7 @@ flowchart LR
      SLIDE 7 — ToT CHUNKING
 ═══════════════════════════ -->
 <div class="slide" id="slide-9">
-  <div class="slide-num">9 / 22</div>
+  <div class="slide-num">9 / 23</div>
   <div class="label r">RAG Service</div>
   <h2>ToT Chunking Strategy Selector</h2>
   <div class="cols c-side" style="gap:28px; flex:1;">
@@ -716,7 +734,7 @@ flowchart TD
      SLIDE 8 — SD dispatch_refresh
 ═══════════════════════════ -->
 <div class="slide" id="slide-10">
-  <div class="slide-num">10 / 22</div>
+  <div class="slide-num">10 / 23</div>
   <div class="label p">System Design Service</div>
   <h2>SD Service — dispatch_refresh Entry Point</h2>
   <div class="cols c2" style="gap:28px; flex:1;">
@@ -775,7 +793,7 @@ flowchart TD
      SLIDE 9 — SD per-page enrich
 ═══════════════════════════ -->
 <div class="slide" id="slide-11">
-  <div class="slide-num">11 / 22</div>
+  <div class="slide-num">11 / 23</div>
   <div class="label p">System Design Service</div>
   <h2>SD Service — Per-Page Enrichment Flow</h2>
   <div class="mwrap tall" style="flex:1;" data-zoom="2.5">
@@ -821,7 +839,7 @@ flowchart TB
      SLIDE 10 — SD ReAct + analyze_code
 ═══════════════════════════ -->
 <div class="slide" id="slide-12">
-  <div class="slide-num">12 / 22</div>
+  <div class="slide-num">12 / 23</div>
   <div class="label p">System Design Service</div>
   <h2>SD Service — ReAct Loop &amp; analyze_code</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
@@ -883,7 +901,7 @@ flowchart LR
      SLIDE 11 — BP dispatch_refresh
 ═══════════════════════════ -->
 <div class="slide" id="slide-13">
-  <div class="slide-num">13 / 22</div>
+  <div class="slide-num">13 / 23</div>
   <div class="label g">Business + Product Service</div>
   <h2>BP Service — dispatch_refresh Entry Point</h2>
   <div class="cols c2" style="gap:28px; flex:1;">
@@ -942,7 +960,7 @@ flowchart TD
      SLIDE 12 — BP per-page enrich
 ═══════════════════════════ -->
 <div class="slide" id="slide-14">
-  <div class="slide-num">14 / 22</div>
+  <div class="slide-num">14 / 23</div>
   <div class="label g">Business + Product Service</div>
   <h2>BP Service — Per-Page Enrichment Flow</h2>
   <div class="mwrap tall" style="flex:1;" data-zoom="2.5">
@@ -987,7 +1005,7 @@ flowchart TB
      SLIDE 13 — BP ReAct Loop
 ═══════════════════════════ -->
 <div class="slide" id="slide-15">
-  <div class="slide-num">15 / 22</div>
+  <div class="slide-num">15 / 23</div>
   <div class="label g">Business + Product Service</div>
   <h2>BP Service — ReAct Loop</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
@@ -1040,7 +1058,7 @@ flowchart LR
      SLIDE 14 — ORCH event routing
 ═══════════════════════════ -->
 <div class="slide" id="slide-16">
-  <div class="slide-num">16 / 22</div>
+  <div class="slide-num">16 / 23</div>
   <div class="label o">Orchestrator</div>
   <h2>Orchestrator — Event Routing</h2>
   <div class="cols c2" style="gap:28px; flex:1;">
@@ -1098,7 +1116,7 @@ flowchart TD
      SLIDE 15 — ORCH ReAct Loop
 ═══════════════════════════ -->
 <div class="slide" id="slide-17">
-  <div class="slide-num">17 / 22</div>
+  <div class="slide-num">17 / 23</div>
   <div class="label o">Orchestrator</div>
   <h2>Orchestrator — ReAct Loop</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
@@ -1161,7 +1179,7 @@ flowchart LR
      SLIDE 16 — ORCH query merge
 ═══════════════════════════ -->
 <div class="slide" id="slide-18">
-  <div class="slide-num">18 / 22</div>
+  <div class="slide-num">18 / 23</div>
   <div class="label o">Orchestrator</div>
   <h2>Orchestrator — Query Merge &amp; Polish</h2>
   <div class="cols c-side" style="gap:28px; flex:1;">
@@ -1220,7 +1238,7 @@ flowchart TB
      SLIDE 17 — SME INTERACTION
 ═══════════════════════════ -->
 <div class="slide" id="slide-19">
-  <div class="slide-num">19 / 22</div>
+  <div class="slide-num">19 / 23</div>
   <div class="label r">Human-in-the-Loop</div>
   <h2>SME Interaction &amp; Re-Integration</h2>
   <div class="mwrap scroll" style="flex:1;" data-zoom="2.5">
@@ -1258,7 +1276,7 @@ sequenceDiagram
      SLIDE 18 — PORTAL & INFRA
 ═══════════════════════════ -->
 <div class="slide" id="slide-20">
-  <div class="slide-num">20 / 22</div>
+  <div class="slide-num">20 / 23</div>
   <div class="label ab">Portal &amp; Observability</div>
   <h2>Documentation Portal</h2>
   <div class="cols c2" style="gap:28px; flex:1;">
@@ -1296,10 +1314,20 @@ sequenceDiagram
 </div>
 
 <!-- ═══════════════════════════
-     SLIDE 19 — RESULTS
+     SLIDE 21 — DEMO
 ═══════════════════════════ -->
 <div class="slide" id="slide-21">
-  <div class="slide-num">21 / 22</div>
+  <div class="slide-num">21 / 23</div>
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;">
+    <h1 style="font-size:160px; letter-spacing:.1em; color:var(--accent); text-shadow:0 0 60px rgba(255,107,53,0.4);">DEMO</h1>
+  </div>
+</div>
+
+<!-- ═══════════════════════════
+     SLIDE 19 — RESULTS
+═══════════════════════════ -->
+<div class="slide" id="slide-22">
+  <div class="slide-num">22 / 23</div>
   <div class="label ag">Results</div>
   <h2>Results</h2>
   <div class="cols c2" style="gap:24px; flex:1;">
@@ -1334,8 +1362,8 @@ sequenceDiagram
 <!-- ═══════════════════════════
      SLIDE 19 — TAKEAWAYS
 ═══════════════════════════ -->
-<div class="slide" id="slide-22">
-  <div class="slide-num">22 / 22</div>
+<div class="slide" id="slide-23">
+  <div class="slide-num">23 / 23</div>
   <div class="label p">Wrap-Up</div>
   <h2>Takeaways &amp; Learnings</h2>
   <div class="cols c2" style="gap:22px; margin-bottom:20px;">
@@ -1362,6 +1390,23 @@ sequenceDiagram
     <div class="card ao"><div class="label o" style="text-align:center;">What Was Hard</div><div class="tbx" style="margin-top:10px;">✏️ Fill in here</div></div>
     <div class="card ag"><div class="label g" style="text-align:center;">What's Next</div><div class="tbx" style="margin-top:10px;">✏️ Fill in here</div></div>
   </div>
+  <div class="hr" style="margin-top:20px;"></div>
+  <div class="cols c2" style="gap:16px; margin-top:16px;">
+    <div class="card ar" style="display:flex;flex-direction:column;gap:6px;">
+      <div class="label" style="margin-bottom:2px;">Project Repository</div>
+      <a href="https://github.com/kikecorona/agentic-ai-capstone-project" target="_blank"
+         style="font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--accent);text-decoration:none;word-break:break-all;">
+        https://github.com/kikecorona/agentic-ai-capstone-project
+      </a>
+    </div>
+    <div class="card ag" style="display:flex;flex-direction:column;gap:6px;">
+      <div class="label g" style="margin-bottom:2px;">Pear Store Repository</div>
+      <a href="https://github.com/kikecorona/pear-store" target="_blank"
+         style="font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--accent2);text-decoration:none;word-break:break-all;">
+        https://github.com/kikecorona/pear-store
+      </a>
+    </div>
+  </div>
 </div>
 
 </div><!-- /.deck -->
@@ -1373,7 +1418,7 @@ sequenceDiagram
 </nav>
 
 <script>
-const TOTAL = 22;
+const TOTAL = 23;
 let current = 1;
 
 function updateNav() {

@@ -483,11 +483,12 @@ class OrchestratorService:
                         "error": f"{type(exc).__name__}: {exc}",
                     })
 
-            # 3. Clear the queue entry — mark answered for audit, then
-            # remove so subsequent ``GET /v1/sme-questions?status=pending``
-            # no longer surfaces it.
+            # 3. Mark the queue entry answered for audit + telemetry.
+            # The row is kept (not deleted) so the telemetry endpoint can
+            # count resolved questions and compute resolution-time percentiles.
+            # Pending-queue queries already filter on ``answered_at IS NULL``
+            # so answered rows stay invisible to the SME panel.
             self._state.mark_answered(question_id)
-            self._state.delete_question(question_id)
 
             span.set_status("ok")
             span.set_payload_summary({
