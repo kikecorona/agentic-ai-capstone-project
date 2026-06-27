@@ -127,8 +127,8 @@
 
   /* ── MERMAID WRAP ── */
   .mwrap {
-    background: #f8fafc;
-    border: 1px solid #d1d9e0;
+    background: var(--surface2);
+    border: 1px solid rgba(255,255,255,0.12);
     border-radius: 12px;
     padding: 18px;
     overflow: auto;
@@ -136,8 +136,8 @@
     align-items: flex-start;
     justify-content: center;
   }
-  .mwrap svg { display: block; }
-  /* Force black text on all mermaid SVG content */
+  .mwrap svg { display: block; background: var(--surface2); }
+  /* White text on dark background */
   .mwrap svg text,
   .mwrap svg text tspan,
   .mwrap svg .nodeLabel,
@@ -148,24 +148,42 @@
   .mwrap svg .edgeLabel *,
   .mwrap svg foreignObject div,
   .mwrap svg foreignObject p,
-  .mwrap svg foreignObject span { color: #000 !important; fill: #000 !important; }
-  /* Sequence diagram actor boxes — match flowchart node palette */
-  .mwrap svg .actor { fill: #E8F5E9 !important; stroke: #2E7D32 !important; }
-  .mwrap svg .actor-line { stroke: #2E7D32 !important; }
-  .mwrap svg .note { fill: #FFF9C4 !important; stroke: #F57F17 !important; }
-  .mwrap svg .activation0, .mwrap svg .activation1, .mwrap svg .activation2 { fill: #E3F2FD !important; stroke: #1565C0 !important; }
-  .mwrap svg .loopLine, .mwrap svg .loopText { stroke: #EF6C00 !important; fill: #FFF3E0 !important; }
-  /* Thicker edges */
-  .mwrap svg .flowchart-link,
-  .mwrap svg path.path,
-  .mwrap svg .edge path,
-  .mwrap svg line.divider { stroke-width: 5px !important; }
-  /* Thicker node borders */
+  .mwrap svg foreignObject span,
+  .mwrap svg .node foreignObject *,
+  .mwrap svg g.node foreignObject * { color: #fff !important; fill: #fff !important; }
+  /* foreignObject div must be transparent so the rect fill shows through */
+  .mwrap svg foreignObject > div,
+  .mwrap svg foreignObject > div > * { background: transparent !important; }
+  /* Node fills — transparent so the dark mwrap background shows through */
   .mwrap svg .node rect,
   .mwrap svg .node polygon,
   .mwrap svg .node circle,
   .mwrap svg .node ellipse,
-  .mwrap svg .node path { stroke-width: 3.5px !important; }
+  .mwrap svg .node path,
+  .mwrap svg .label-container,
+  .mwrap svg g.node > rect,
+  .mwrap svg g.node > polygon,
+  .mwrap svg g.node > circle,
+  .mwrap svg g.node > ellipse,
+  .mwrap svg g.node > path { fill: transparent !important; stroke: #fff !important; stroke-width: 3.5px !important; }
+  /* Cluster/subgraph backgrounds */
+  .mwrap svg .cluster rect { fill: rgba(255,255,255,0.04) !important; stroke: rgba(255,255,255,0.25) !important; stroke-width: 2px !important; }
+  /* Edge label background */
+  .mwrap svg .edgeLabel rect { fill: var(--surface2) !important; }
+  /* Sequence diagram — dark palette */
+  .mwrap svg .actor { fill: #0e1a0e !important; stroke: #7cdb40 !important; }
+  .mwrap svg .actor-line { stroke: rgba(255,255,255,0.35) !important; }
+  .mwrap svg .note { fill: #1a1800 !important; stroke: #ffd600 !important; }
+  .mwrap svg .activation0, .mwrap svg .activation1, .mwrap svg .activation2 { fill: #00101a !important; stroke: #00acc1 !important; }
+  .mwrap svg .loopLine { stroke: #ff6b35 !important; }
+  .mwrap svg .loopText { fill: #ff6b35 !important; }
+  /* Edges — muted so they don't clash with text labels */
+  .mwrap svg .flowchart-link,
+  .mwrap svg path.path,
+  .mwrap svg .edge path { stroke: rgba(255,255,255,0.35) !important; stroke-width: 5px !important; }
+  .mwrap svg line.divider { stroke: rgba(255,255,255,0.15) !important; stroke-width: 2px !important; }
+  /* Arrow markers — match edge opacity */
+  .mwrap svg marker path { fill: rgba(255,255,255,0.35) !important; stroke: rgba(255,255,255,0.35) !important; }
   /* Bigger text inside diagrams */
   .mwrap svg text,
   .mwrap svg text tspan { font-size: 20px !important; }
@@ -176,16 +194,15 @@
   /* ── ZOOM CONTROLS — sits in a wrapper div outside the scrollable mwrap ── */
   .zoom-bar {
     position: absolute;
-    top: 8px; right: 8px;
+    top: 8px; left: 8px;
     display: flex;
     align-items: center;
     gap: 4px;
     z-index: 10;
-    background: rgba(248,250,252,0.95);
-    border: 1px solid #c8d0da;
+    border: 1px solid rgba(200,208,218,0.4);
     border-radius: 8px;
     padding: 4px 8px;
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(8px);
     box-shadow: 0 2px 8px rgba(0,0,0,.12);
   }
   .zoom-bar label {
@@ -196,10 +213,10 @@
   .zoom-bar input[type=number] {
     width: 54px;
     height: 26px;
-    border: 1px solid #d1d9e0;
+    border: 1px solid rgba(200,208,218,0.3);
     border-radius: 5px;
-    background: #fff;
-    color: #24292e;
+    background: transparent;
+    color: #fff;
     font-size: 13px;
     font-family: 'SF Mono', Consolas, monospace;
     text-align: right;
@@ -208,7 +225,7 @@
   }
   .zoom-bar input[type=number]:focus { border-color: #0969da; box-shadow: 0 0 0 2px rgba(9,105,218,.2); }
   .zoom-bar input[type=number]::-webkit-inner-spin-button,
-  .zoom-bar input[type=number]::-webkit-outer-spin-button { opacity: 1; }
+  .zoom-bar input[type=number]::-webkit-outer-spin-button { opacity: 1; filter: invert(1); }
   .mwrap.scroll { max-height: calc(100vh - 260px); }
   .mwrap.tall   { max-height: calc(100vh - 220px); }
   .mwrap.short  { max-height: 320px; }
@@ -285,6 +302,8 @@
       <span class="badge br">Vue 3 + Quasar</span>
       <span class="badge bb">llama3.1:8b</span>
       <span class="badge bg">OpenTelemetry</span>
+      <span class="badge bp">Auto-RAG</span>
+      <span class="badge bo">ReAct</span>
     </div>
   </div>
 </div>
@@ -520,7 +539,7 @@
   <div class="slide-num">7 / 23</div>
   <div class="label">Architecture</div>
   <h2>High-Level Architecture Diagram</h2>
-  <div class="mwrap scroll" style="flex:1;" data-zoom="2.5">
+  <div class="mwrap scroll" style="flex:1;" data-zoom="4">
     <pre class="mermaid">
 flowchart LR
     Portal(["Documentation Portal\nchatbot + SME UI\n+ rendered docs"])
@@ -617,7 +636,7 @@ flowchart LR
   <div class="label r">RAG Service</div>
   <h2>Auto-RAG Loop — Self-Correcting Retrieval</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
-    <div class="mwrap scroll" style="width:100%;max-height:350px;" data-zoom="2">
+    <div class="mwrap scroll" style="width:100%;max-height:350px;" data-zoom="2.5">
       <pre class="mermaid">
 flowchart LR
     Q(["RAG_MCP.retrieve\nquery, domain_filter, mode"]) --> D{"Decide:\nretrieve?"}
@@ -682,7 +701,7 @@ flowchart LR
   <div class="label r">RAG Service</div>
   <h2>ToT Chunking Strategy Selector</h2>
   <div class="cols c-side" style="gap:28px; flex:1;">
-    <div class="mwrap scroll" style="max-width:850px;" data-zoom="2.5">
+    <div class="mwrap scroll" style="max-width:850px;" data-zoom="4">
       <pre class="mermaid">
 flowchart TD
     In(["RAG_MCP.index\nnew document"]) --> Gen["Generate K=4 candidate strategies\nper-paragraph · per-section\nper-N-chars · summary-only · hybrid"]
@@ -796,7 +815,7 @@ flowchart TD
   <div class="slide-num">11 / 23</div>
   <div class="label p">System Design Service</div>
   <h2>SD Service — Per-Page Enrichment Flow</h2>
-  <div class="mwrap tall" style="flex:1;" data-zoom="2.5">
+  <div class="mwrap tall" style="flex:1;" data-zoom="4.5">
     <pre class="mermaid">
 flowchart TB
     Start(["_refresh_one_page"]) --> Read["read existing page"]
@@ -906,7 +925,7 @@ flowchart LR
   <h2>BP Service — dispatch_refresh Entry Point</h2>
   <div class="cols c2" style="gap:28px; flex:1;">
     <div style="display:flex;flex-direction:column;gap:14px;">
-      <div class="mwrap" style="flex:1;" data-zoom="1.5">
+      <div class="mwrap" style="flex:1;max-width:750px;" data-zoom="2.5">
         <pre class="mermaid">
 flowchart TD
     Start(["dispatch_refresh"]) --> ListP["list_pages"]
@@ -963,7 +982,7 @@ flowchart TD
   <div class="slide-num">14 / 23</div>
   <div class="label g">Business + Product Service</div>
   <h2>BP Service — Per-Page Enrichment Flow</h2>
-  <div class="mwrap tall" style="flex:1;" data-zoom="2.5">
+  <div class="mwrap tall" style="flex:1;" data-zoom="4">
     <pre class="mermaid">
 flowchart TB
     Start(["_refresh_one_page"]) --> Read["read existing page"]
@@ -1063,7 +1082,7 @@ flowchart LR
   <h2>Orchestrator — Event Routing</h2>
   <div class="cols c2" style="gap:28px; flex:1;">
     <div style="display:flex;flex-direction:column;gap:14px;">
-      <div class="mwrap" style="flex:1;max-width:750px;" data-zoom="1.5">
+      <div class="mwrap" style="flex:1;max-width:750px;" data-zoom="2.5">
         <pre class="mermaid">
 flowchart TD
     Start(["REST event"]) --> Route["route\nclassify event_type"]
@@ -1183,7 +1202,7 @@ flowchart LR
   <div class="label o">Orchestrator</div>
   <h2>Orchestrator — Query Merge &amp; Polish</h2>
   <div class="cols c-side" style="gap:28px; flex:1;">
-    <div class="mwrap scroll" style="max-width:850px;" data-zoom="2.5">
+    <div class="mwrap scroll" style="max-width:850px;" data-zoom="4">
       <pre class="mermaid">
 flowchart TB
     Start(["portal_query"]) --> Class["classify domain\nBP / SD / both"]
@@ -1279,45 +1298,108 @@ sequenceDiagram
   <div class="slide-num">20 / 23</div>
   <div class="label ab">Portal &amp; Observability</div>
   <h2>Documentation Portal</h2>
-  <div class="cols c2" style="gap:28px; flex:1;">
-    <div style="display:flex;flex-direction:column;gap:16px;">
-      <div class="card ab">
-        <div class="label">Key Metrics Tracked</div>
-        <ul>
-          <li>Answer re-grade pass rate (faithfulness + answerability axes)</li>
-          <li>Escalation rate · grader-fail rate · RAG status distribution</li>
-          <li>Coverage: % products with BP page · % services with SD page</li>
-          <li>Open-placeholder rate · SME resolution time (median / p95)</li>
-          <li>Cross-reference health: % Markdown links that resolve</li>
-          <li>Page freshness: median age since last refresh</li>
-        </ul>
-      </div>
-      <div class="shot" style="flex:1; min-height:200px;">
-        <div class="ico">🖼</div>
-        <strong>Screenshot 1</strong>
-        <div class="cap">Add screenshot here</div>
-      </div>
+  <div style="display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:20px; flex:1;">
+
+    <!-- Top-left: Key Features bubble -->
+    <div class="card ab" style="border-left:4px solid var(--accent4); display:flex; flex-direction:column; gap:10px;">
+      <div class="label">Key Features</div>
+      <ul>
+        <li><strong>BP + SD docs viewer</strong> — branch-aware Markdown renderer with side-by-side branch compare mode</li>
+        <li><strong>RAG-grounded chatbot</strong> — cited answers sourced from the live embedding index</li>
+        <li><strong>SME question queue</strong> — pending questions surfaced with context + inline answer form</li>
+        <li><strong>Real-time X-Ray</strong> — SSE event stream combining service logs and LLM audit trail</li>
+        <li><strong>Telemetry Dashboard</strong> — coverage, freshness, escalation rate, cross-reference health</li>
+      </ul>
     </div>
-    <div style="display:flex;flex-direction:column;gap:16px;">
-      <div class="shot" style="flex:1; min-height:140px;">
-        <div class="ico">🖼</div>
-        <strong>Screenshot 2</strong>
-        <div class="cap">Add screenshot here</div>
-      </div>
-      <div class="shot" style="flex:1; min-height:140px;">
-        <div class="ico">🖼</div>
-        <strong>Screenshot 3</strong>
-        <div class="cap">Add screenshot here</div>
-      </div>
+
+    <!-- Top-right: Screenshot 1 -->
+    <div class="shot" style="min-height:200px; padding:0; overflow:hidden;">
+      <img src="images/dp-1.png" alt="Documentation Portal screenshot 1" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+    </div>
+
+    <!-- Bottom-left: Screenshot 2 -->
+    <div class="shot" style="min-height:140px; padding:0; overflow:hidden;">
+      <img src="images/dp-2.png" alt="Documentation Portal screenshot 2" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+    </div>
+
+    <!-- Bottom-right: Key Metrics Tracked -->
+    <div class="card ab">
+      <div class="label">Key Metrics Tracked</div>
+      <ul>
+        <li>Answer re-grade pass rate (faithfulness + answerability axes)</li>
+        <li>Escalation rate · grader-fail rate · RAG status distribution</li>
+        <li>Coverage: % products with BP page · % services with SD page</li>
+        <li>Open-placeholder rate · SME resolution time (median / p95)</li>
+        <li>Cross-reference health: % Markdown links that resolve</li>
+        <li>Page freshness: median age since last refresh</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════
+     SLIDE 21 — POC LIMITATIONS
+═══════════════════════════ -->
+<div class="slide" id="slide-21">
+  <div class="slide-num">21 / 24</div>
+  <div class="label r">PoC Scope</div>
+  <h2>Proof-of-Concept Limitations</h2>
+  <div class="cols c3" style="gap:18px; flex:1;">
+    <div class="card ar">
+      <div class="label r">Model &amp; Quality</div>
+      <ul>
+        <li><strong>Single local model</strong> — all nodes share <code>llama3.1:8b</code>; no per-node specialization</li>
+        <li><strong>No adversarial testing</strong> — prompt injection and PII leakage rates unmeasured</li>
+      </ul>
+    </div>
+    <div class="card ap">
+      <div class="label p">Infrastructure</div>
+      <ul>
+        <li><strong>Single-host</strong> — no horizontal scaling or load balancing</li>
+        <li><strong>SQLite everywhere</strong> — not production-grade at volume</li>
+        <li><strong>In-process ChromaDB</strong> — no dedicated vector store</li>
+        <li><strong>Stub OTel collector</strong> — SQLite-backed, not a real backend</li>
+      </ul>
+    </div>
+    <div class="card ao">
+      <div class="label o">Triggers &amp; Sources</div>
+      <ul>
+        <li><strong>No webhook</strong> — schedule-based or manual only</li>
+        <li><strong>Git only</strong> — Slack, Confluence, email out of scope</li>
+        <li><strong>Source code not in RAG</strong> — only BP docs and SD pages indexed</li>
+      </ul>
+    </div>
+    <div class="card ag">
+      <div class="label g">Synthetic Corpus</div>
+      <ul>
+        <li><strong>Hand-crafted test data</strong> — real legacy codebases will surface edge cases</li>
+        <li><strong>Partial OTel coverage</strong> — only 5 of 10 services emit spans</li>
+      </ul>
+    </div>
+    <div class="card ab">
+      <div class="label">Security &amp; Access</div>
+      <ul>
+        <li><strong>No auth</strong> — anyone who can reach the Portal can trigger refreshes</li>
+        <li><strong>Single shared repo</strong> — no per-domain access control</li>
+        <li><strong>Stub SME registry</strong> — no skill-based routing or workload balancing</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="label" style="color:var(--accent2);">Evaluation</div>
+      <ul>
+        <li><strong>No eval harness</strong> — hallucination checks are manual spot-checks</li>
+        <li><strong>Monitoring MCP absent</strong> — ToT falls back to code references for dep-graph scoring</li>
+      </ul>
     </div>
   </div>
 </div>
 
 <!-- ═══════════════════════════
-     SLIDE 21 — DEMO
+     SLIDE 22 — DEMO
 ═══════════════════════════ -->
-<div class="slide" id="slide-21">
-  <div class="slide-num">21 / 23</div>
+<div class="slide" id="slide-22">
+  <div class="slide-num">22 / 24</div>
   <div style="flex:1; display:flex; align-items:center; justify-content:center;">
     <h1 style="font-size:160px; letter-spacing:.1em; color:var(--accent); text-shadow:0 0 60px rgba(255,107,53,0.4);">DEMO</h1>
   </div>
@@ -1326,84 +1408,111 @@ sequenceDiagram
 <!-- ═══════════════════════════
      SLIDE 19 — RESULTS
 ═══════════════════════════ -->
-<div class="slide" id="slide-22">
-  <div class="slide-num">22 / 23</div>
+<div class="slide" id="slide-23">
+  <div class="slide-num">23 / 24</div>
   <div class="label ag">Results</div>
   <h2>Results</h2>
-  <div class="cols c2" style="gap:24px; flex:1;">
-    <div style="display:flex;flex-direction:column;gap:16px;">
-      <div class="card ag">
-        <div class="label g">Key Results</div>
-        <ul>
-          <li><strong>✏️</strong> Result #1 — add your finding here</li>
-          <li><strong>✏️</strong> Result #2 — add your finding here</li>
-          <li><strong>✏️</strong> Result #3 — add your finding here</li>
-          <li><strong>✏️</strong> Result #4 — add your finding here</li>
-          <li><strong>✏️</strong> Result #5 — add your finding here</li>
-          <li><strong>✏️</strong> Result #6 — add your finding here</li>
-        </ul>
-      </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:16px;flex:1;">
+    <div class="card ag" style="display:flex;flex-direction:column;">
+      <div class="label g">Key Results</div>
+      <ul>
+        <li><strong>✏️</strong> Result #1 — add your finding here</li>
+        <li><strong>✏️</strong> Result #2 — add your finding here</li>
+        <li><strong>✏️</strong> Result #3 — add your finding here</li>
+        <li><strong>✏️</strong> Result #4 — add your finding here</li>
+        <li><strong>✏️</strong> Result #5 — add your finding here</li>
+        <li><strong>✏️</strong> Result #6 — add your finding here</li>
+      </ul>
     </div>
-    <div style="display:flex;flex-direction:column;gap:16px;">
-      <div class="shot" style="flex:1; min-height:180px;">
-        <div class="ico">🖼</div>
-        <strong>Screenshot 1</strong>
-        <div class="cap">Add screenshot here</div>
-      </div>
-      <div class="shot" style="flex:1; min-height:180px;">
-        <div class="ico">🖼</div>
-        <strong>Screenshot 2</strong>
-        <div class="cap">Add screenshot here</div>
-      </div>
+    <div class="shot" style="padding:0;overflow:hidden;">
+      <img src="images/dp-3.png" alt="Screenshot 1" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
     </div>
+    <div class="shot" style="padding:0;overflow:hidden;">
+      <img src="images/dp-4.png" alt="Screenshot 2" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+    </div>
+    <div class="shot" style="padding:0;overflow:hidden;">
+      <img src="images/dp-5.png" alt="Screenshot 3" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+    </div>
+  </div>
   </div>
 </div>
 
 <!-- ═══════════════════════════
      SLIDE 19 — TAKEAWAYS
 ═══════════════════════════ -->
-<div class="slide" id="slide-23">
-  <div class="slide-num">23 / 23</div>
+<div class="slide" id="slide-24">
+  <div class="slide-num">24 / 24</div>
   <div class="label p">Wrap-Up</div>
   <h2>Takeaways &amp; Learnings</h2>
-  <div class="cols c2" style="gap:22px; margin-bottom:20px;">
-    <div>
-      <div class="label" style="margin-bottom:12px;">Key Takeaways</div>
-      <div style="display:flex;flex-direction:column;gap:12px;">
+
+  <!-- Row 1: Key Takeaways + What I Learned -->
+  <div class="cols c2" style="gap:16px; margin-bottom:14px;">
+    <div class="card ar">
+      <div class="label" style="margin-bottom:10px;">Key Takeaways</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
         <div class="tbx">✏️ Add your key takeaway #1 here</div>
         <div class="tbx">✏️ Add your key takeaway #2 here</div>
         <div class="tbx">✏️ Add your key takeaway #3 here</div>
       </div>
     </div>
-    <div>
-      <div class="label" style="margin-bottom:12px;">What I Learned</div>
-      <div style="display:flex;flex-direction:column;gap:12px;">
-        <div class="tbx">✏️ Learning #1 — e.g. about LangGraph / multi-agent design</div>
-        <div class="tbx">✏️ Learning #2 — e.g. about MCP contracts and isolation</div>
-        <div class="tbx">✏️ Learning #3 — e.g. about RAG self-correction loops</div>
+    <div class="card ab">
+      <div class="label" style="margin-bottom:10px;">What I Learned</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div class="tbx">✏️ Learning #1 — e.g. LangGraph / multi-agent design</div>
+        <div class="tbx">✏️ Learning #2 — e.g. MCP contracts and isolation</div>
+        <div class="tbx">✏️ Learning #3 — e.g. RAG self-correction loops</div>
       </div>
     </div>
   </div>
-  <div class="hr"></div>
-  <div class="cols c3" style="gap:16px; margin-top:16px;">
-    <div class="card ab"><div class="label" style="text-align:center;">What Worked Well</div><div class="tbx" style="margin-top:10px;">✏️ Fill in here</div></div>
-    <div class="card ao"><div class="label o" style="text-align:center;">What Was Hard</div><div class="tbx" style="margin-top:10px;">✏️ Fill in here</div></div>
-    <div class="card ag"><div class="label g" style="text-align:center;">What's Next</div><div class="tbx" style="margin-top:10px;">✏️ Fill in here</div></div>
+
+  <!-- Row 2: What Worked Well + What Was Hard + What's Next -->
+  <div class="cols c3" style="gap:16px; margin-bottom:14px;">
+    <div class="card ag">
+      <div class="label g" style="margin-bottom:10px;">What Worked Well</div>
+      <div class="tbx">✏️ Fill in here</div>
+    </div>
+    <div class="card ao">
+      <div class="label o" style="margin-bottom:10px;">What Was Hard</div>
+      <div class="tbx">✏️ Fill in here</div>
+    </div>
+    <div class="card ap">
+      <div class="label p" style="margin-bottom:10px;">What's Next</div>
+      <div class="tbx">✏️ Fill in here</div>
+    </div>
   </div>
-  <div class="hr" style="margin-top:20px;"></div>
-  <div class="cols c2" style="gap:16px; margin-top:16px;">
+
+  <!-- Row 3: Repos -->
+  <div class="cols c2" style="gap:16px; margin-bottom:14px;">
     <div class="card ar" style="display:flex;flex-direction:column;gap:6px;">
-      <div class="label" style="margin-bottom:2px;">Project Repository</div>
+      <div class="label" style="margin-bottom:2px;">🗂 Project Repository</div>
       <a href="https://github.com/kikecorona/agentic-ai-capstone-project" target="_blank"
-         style="font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--accent);text-decoration:none;word-break:break-all;">
+         style="font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--accent);text-decoration:none;word-break:break-all;">
         https://github.com/kikecorona/agentic-ai-capstone-project
       </a>
     </div>
     <div class="card ag" style="display:flex;flex-direction:column;gap:6px;">
-      <div class="label g" style="margin-bottom:2px;">Pear Store Repository</div>
+      <div class="label g" style="margin-bottom:2px;">🍐 Pear Store Repository</div>
       <a href="https://github.com/kikecorona/pear-store" target="_blank"
-         style="font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--accent2);text-decoration:none;word-break:break-all;">
+         style="font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--accent2);text-decoration:none;word-break:break-all;">
         https://github.com/kikecorona/pear-store
+      </a>
+    </div>
+  </div>
+
+  <!-- Row 4: Docs -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div class="card ab" style="display:flex;flex-direction:column;gap:6px;">
+      <div class="label" style="margin-bottom:2px;">🏛 Architecture Document</div>
+      <a href="https://github.com/kikecorona/agentic-ai-capstone-project/blob/main/PROJECT_ARCHITECTURE.md" target="_blank"
+         style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--accent4);text-decoration:none;word-break:break-all;">
+        https://github.com/kikecorona/agentic-ai-capstone-project/blob/main/PROJECT_ARCHITECTURE.md
+      </a>
+    </div>
+    <div class="card ap" style="display:flex;flex-direction:column;gap:6px;">
+      <div class="label p" style="margin-bottom:2px;">🔬 Low-Level Design Document</div>
+      <a href="https://github.com/kikecorona/agentic-ai-capstone-project/blob/main/PROJECT_LOW_LEVEL_DESIGN.md" target="_blank"
+         style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--accent5);text-decoration:none;word-break:break-all;">
+        https://github.com/kikecorona/agentic-ai-capstone-project/blob/main/PROJECT_LOW_LEVEL_DESIGN.md
       </a>
     </div>
   </div>
@@ -1418,7 +1527,7 @@ sequenceDiagram
 </nav>
 
 <script>
-const TOTAL = 23;
+const TOTAL = 24;
 let current = 1;
 
 function updateNav() {
@@ -1470,9 +1579,6 @@ function initZoomControls() {
     var bar = document.createElement('div');
     bar.className = 'zoom-bar';
 
-    var label = document.createElement('label');
-    label.textContent = 'Zoom';
-
     var input = document.createElement('input');
     input.type = 'number';
     input.min  = '10';
@@ -1482,15 +1588,10 @@ function initZoomControls() {
     input.addEventListener('change', function() { applyPct(parseInt(this.value) || defaultPct); });
     input.addEventListener('keydown', function(e) { e.stopPropagation(); });
 
-    var unit = document.createElement('label');
-    unit.textContent = '%';
-
-    bar.appendChild(label);
     bar.appendChild(input);
-    bar.appendChild(unit);
 
     // Place the zoom bar in a wrapper OUTSIDE the scrollable mwrap so it
-    // stays fixed in the top-right corner regardless of scroll position.
+    // stays fixed in the top-left corner regardless of scroll position.
     var anchor = document.createElement('div');
     anchor.style.position = 'relative';
     // Transfer layout-relevant inline styles from mwrap to anchor so flex
@@ -1505,6 +1606,35 @@ function initZoomControls() {
     anchor.appendChild(bar);
 
     applyPct(defaultPct);
+  });
+}
+
+function fixDiagramColors() {
+  var STROKE = 'rgba(255,255,255,0.8)';
+  var SW = '3px';
+  document.querySelectorAll('.mwrap svg').forEach(function(svg) {
+    // Target every shape element — both those with inline fill (classDef) and presentation-attribute fill
+    svg.querySelectorAll('rect, polygon, circle, ellipse, path').forEach(function(el) {
+      if (el.closest('marker')) return;           // keep arrowhead fills
+      if (el.closest('.cluster')) return;         // keep cluster subtle background
+      var cls = (el.className && el.className.baseVal) || '';
+      if (cls.includes('flowchart-link') || cls.includes('transition')) return; // keep edge strokes
+      el.style.setProperty('fill', 'transparent', 'important');
+      // Only apply stroke to shapes that aren't pure edge connectors
+      if (!cls.includes('flowchart-link') && !cls.includes('path')) {
+        el.style.setProperty('stroke', STROKE, 'important');
+        el.style.setProperty('stroke-width', SW, 'important');
+      }
+    });
+    // Force white on all text
+    svg.querySelectorAll('text, tspan').forEach(function(el) {
+      el.style.setProperty('fill', '#fff', 'important');
+    });
+    // Force white on all foreignObject HTML labels
+    svg.querySelectorAll('foreignObject *').forEach(function(el) {
+      el.style.setProperty('color', '#fff', 'important');
+      el.style.setProperty('background-color', 'transparent', 'important');
+    });
   });
 }
 
@@ -1525,6 +1655,7 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   mermaid.run({ querySelector: '.mermaid' }).then(function() {
+    fixDiagramColors();
     slides.forEach(function(s) {
       s.style.display = 'none';
       s.style.visibility = '';

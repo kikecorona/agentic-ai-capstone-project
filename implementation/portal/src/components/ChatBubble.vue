@@ -231,8 +231,8 @@ function docHrefFor(s) {
   box-shadow: 0 6px 18px rgba(255, 107, 53, 0.4);
 }
 .chat-panel {
-  width: 380px;
-  height: 540px;
+  width: 450px;
+  height: 60vh;
   max-width: calc(100vw - 48px);
   max-height: calc(100vh - 96px);
   background: var(--theme-bg-page);

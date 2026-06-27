@@ -275,12 +275,15 @@ function lineClass(ev) {
 
 function formatTs(ev) {
   const t = ev.timestamp ?? ev.started_at;
-  if (!t) return "        ";
+  if (!t) return "                ";
   const d = new Date(t * 1000);
+  const yy = String(d.getFullYear()).slice(2);
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   const ss = String(d.getSeconds()).padStart(2, "0");
-  return `${hh}:${mm}:${ss}`;
+  return `${yy}/${mo}/${dd} ${hh}:${mm}:${ss}`;
 }
 
 function formatTsFull(ev) {
@@ -446,7 +449,7 @@ function formatMaybeJson(raw) {
 }
 .log-line {
   display: grid;
-  grid-template-columns: 64px 84px 220px 1fr;
+  grid-template-columns: 148px 84px 220px 1fr;
   gap: 0.5rem;
   padding: 1px 0;
   color: #d0d0d0;
