@@ -134,10 +134,7 @@
                button is disabled while a write is in flight so
                accidental double-clicks don't queue two commits. -->
           <q-btn
-            v-if="selectedPath && !editing"
-            flat
-            dense
-            icon="edit"
+            v-if="selectedPath && !editing && !compareActive"
             label="edit"
             class="edit-btn q-mr-sm"
             @click="startEdit"
@@ -175,41 +172,94 @@
             class="open-btn"
           />
         </q-toolbar>
-        <q-scroll-area v-if="!editing" class="col">
-          <div v-if="contentLoading" class="q-pa-md">
-            <q-spinner-puff color="accent" size="2em" />
-            <span class="q-ml-sm">fetching…</span>
+        <!-- Normal single-pane view (or editing) -->
+        <template v-if="!compareActive || editing">
+          <q-scroll-area v-if="!editing" class="col">
+            <div v-if="contentLoading" class="q-pa-md">
+              <q-spinner-puff color="accent" size="2em" />
+              <span class="q-ml-sm">fetching…</span>
+            </div>
+            <div v-else-if="!selectedPath" class="q-pa-lg empty-state">
+              <p>Pick a file from the left to render its Markdown.</p>
+              <p class="text-caption">
+                Source:
+                <a :href="githubTreeUrl" target="_blank">{{ currentPath }}</a>
+                on branch
+                <code>{{ branch }}</code>
+              </p>
+            </div>
+            <article
+              v-else
+              ref="markdownBodyRef"
+              class="markdown-body q-pa-lg"
+              v-html="renderedHtml"
+              @click="onMarkdownClick"
+            />
+          </q-scroll-area>
+          <div v-else class="col column no-wrap editor-pane">
+            <q-banner v-if="editError" class="bg-red-9 text-white">
+              <template v-slot:avatar><q-icon name="error" /></template>
+              {{ editError }}
+            </q-banner>
+            <textarea
+              ref="editorRef"
+              v-model="editorBody"
+              class="md-editor col"
+              spellcheck="false"
+            />
+            <div class="editor-footer">
+              saving to <code>{{ branch }}</code> ·
+              <code>{{ selectedPath }}</code>
+            </div>
           </div>
-          <div v-else-if="!selectedPath" class="q-pa-lg empty-state">
-            <p>Pick a file from the left to render its Markdown.</p>
-            <p class="text-caption">
-              Source:
-              <a :href="githubTreeUrl" target="_blank">{{ currentPath }}</a>
-              on branch
-              <code>{{ branch }}</code>
-            </p>
+        </template>
+
+        <!-- Compare split view: primary branch left, compare branch right -->
+        <div v-else class="row col no-wrap compare-split">
+          <!-- Primary branch pane -->
+          <div class="col column compare-pane">
+            <div class="compare-branch-bar">
+              <q-chip dense square color="accent" text-color="dark" class="branch-chip">
+                {{ branch }}
+              </q-chip>
+            </div>
+            <q-scroll-area class="col">
+              <div v-if="contentLoading" class="q-pa-md">
+                <q-spinner-puff color="accent" size="2em" />
+                <span class="q-ml-sm">fetching…</span>
+              </div>
+              <article
+                v-else
+                ref="markdownBodyRef"
+                class="markdown-body q-pa-lg"
+                v-html="renderedHtml"
+                @click="onMarkdownClick"
+              />
+            </q-scroll-area>
           </div>
-          <article
-            v-else
-            class="markdown-body q-pa-lg"
-            v-html="renderedHtml"
-            @click="onMarkdownClick"
-          />
-        </q-scroll-area>
-        <div v-else class="col column no-wrap editor-pane">
-          <q-banner v-if="editError" class="bg-red-9 text-white">
-            <template v-slot:avatar><q-icon name="error" /></template>
-            {{ editError }}
-          </q-banner>
-          <textarea
-            ref="editorRef"
-            v-model="editorBody"
-            class="md-editor col"
-            spellcheck="false"
-          />
-          <div class="editor-footer">
-            saving to <code>{{ branch }}</code> ·
-            <code>{{ selectedPath }}</code>
+
+          <q-separator vertical color="grey-8" />
+
+          <!-- Compare branch pane -->
+          <div class="col column compare-pane">
+            <div class="compare-branch-bar">
+              <q-chip dense square color="purple-4" text-color="dark" class="branch-chip">
+                {{ settings.compareBranch }}
+              </q-chip>
+            </div>
+            <q-scroll-area class="col">
+              <div v-if="compareContentLoading" class="q-pa-md">
+                <q-spinner-puff color="accent" size="2em" />
+                <span class="q-ml-sm">fetching…</span>
+              </div>
+              <article
+                v-else
+                ref="compareMarkdownBodyRef"
+                class="markdown-body q-pa-lg"
+                v-html="compareHtml"
+                @click="onMarkdownClick"
+              />
+            </q-scroll-area>
           </div>
         </div>
       </div>
@@ -258,6 +308,19 @@ const renderedHtml = ref("");
 // editor (Edit button on the Documentation tab) opens the actual
 // source instead of trying to recover Markdown from rendered HTML.
 const rawText = ref("");
+
+const compareHtml = ref("");
+const compareContentLoading = ref(false);
+const markdownBodyRef = ref(null);
+const compareMarkdownBodyRef = ref(null);
+
+const compareActive = computed(
+  () =>
+    settings.compareMode &&
+    !props.hideTree &&
+    !!settings.compareBranch &&
+    settings.compareBranch !== branch.value,
+);
 
 const branch = computed(() => settings.branch);
 
@@ -612,7 +675,36 @@ async function loadFile(path) {
   // point would silently no-op (querySelector finds nothing). Wait for
   // Vue to flush the v-html into the article, THEN render diagrams.
   await nextTick();
-  await _renderMermaidBlocks();
+  await _renderMermaidBlocks(markdownBodyRef.value);
+}
+
+// ─── Compare pane file fetch ────────────────────────────────────────
+
+async function loadCompareFile(path) {
+  if (!path || !oc || !settings.compareBranch) {
+    compareHtml.value = "";
+    return;
+  }
+  compareContentLoading.value = true;
+  compareHtml.value = "";
+  try {
+    const res = await oc.get("/v1/docs/raw", {
+      params: { path, ref: settings.compareBranch },
+    });
+    const text = typeof res.data?.content === "string" ? res.data.content : "";
+    compareHtml.value = path.toLowerCase().endsWith(".md")
+      ? marked.parse(text)
+      : `<pre>${escapeHtml(text)}</pre>`;
+  } catch (e) {
+    const msg = e?.response?.status
+      ? `HTTP ${e.response.status} fetching ${path}@${settings.compareBranch}`
+      : e.message || String(e);
+    compareHtml.value = `<pre class="text-negative">Error: ${escapeHtml(msg)}</pre>`;
+  } finally {
+    compareContentLoading.value = false;
+  }
+  await nextTick();
+  await _renderMermaidBlocks(compareMarkdownBodyRef.value);
 }
 
 // ─── Manual editor (Documentation tab) ─────────────────────────────
@@ -692,8 +784,8 @@ function escapeHtml(s) {
 // more reliable than `mermaid.run({querySelector})` across versions.
 let _mermaidCounter = 0;
 
-async function _renderMermaidBlocks() {
-  const root = document.querySelector(".markdown-body");
+async function _renderMermaidBlocks(rootEl = null) {
+  const root = rootEl || document.querySelector(".markdown-body");
   if (!root) {
     console.warn(
       "[DocsViewer] mermaid sweep skipped — .markdown-body not in DOM yet",
@@ -797,7 +889,25 @@ watch(
   { immediate: true },
 );
 
-// Theme flip: re-init mermaid with the matching literal palette and
+// Reload compare pane when compare mode is toggled or compare branch changes.
+watch(
+  [() => settings.compareMode, () => settings.compareBranch],
+  () => {
+    if (compareActive.value && selectedPath.value) {
+      loadCompareFile(selectedPath.value);
+    } else {
+      compareHtml.value = "";
+    }
+  },
+);
+
+// Keep compare pane in sync when the selected file changes.
+watch(selectedPath, (path) => {
+  if (compareActive.value && path) loadCompareFile(path);
+  else compareHtml.value = "";
+});
+
+// Theme flip: re-init mermaid
 // re-render any currently-visible diagrams so the existing SVGs flip
 // too. Mermaid stores rendered SVGs keyed by id; resetting via
 // `mermaid.initialize()` and re-running the merge sweep is enough.
@@ -923,6 +1033,21 @@ watch(
 .markdown-body :deep(.mermaid-rendered svg) {
   max-width: 100%;
   height: auto;
+}
+
+// ─── Compare split layout ───────────────────────────────────────────
+.compare-split {
+  overflow: hidden;
+}
+.compare-pane {
+  min-width: 0;
+  overflow: hidden;
+}
+.compare-branch-bar {
+  padding: 4px 10px;
+  background: var(--theme-bg-panel);
+  border-bottom: 1px solid var(--theme-bg-code);
+  flex-shrink: 0;
 }
 
 // ─── Manual editor ─────────────────────────────────────────────────

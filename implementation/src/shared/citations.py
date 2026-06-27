@@ -71,6 +71,10 @@ def _source_full_uri(source: dict[str, Any]) -> str:
     domain = (source.get("domain") or "").strip().lower()
     if not uri:
         return ""
+    # Strip the repo-root prefix so the URI is always relative to the
+    # docs root — mirrors what _normalise_page_dir does for page_uri.
+    if uri.startswith("documentation/"):
+        uri = uri[len("documentation/"):]
     if uri.startswith(("bp/", "sd/")) or uri.startswith("source-code://"):
         return uri
     if domain in {"bp", "sd"}:

@@ -60,6 +60,9 @@ export const useSettingsStore = defineStore("settings", {
     customBranchInput: localStorage.getItem("portal.customBranch") || "",
     // Orange retro is the default — green CRT is opt-in via the toggle.
     theme: localStorage.getItem("portal.theme") || "orange",
+    // Branch compare mode — session-only, not persisted.
+    compareMode: false,
+    compareBranch: "",
   }),
   getters: {
     knownBranches: () => KNOWN_BRANCHES,
@@ -96,6 +99,18 @@ export const useSettingsStore = defineStore("settings", {
     },
     toggleTheme() {
       this.setTheme(this.theme === "orange" ? "green" : "orange");
+    },
+    toggleCompareMode() {
+      this.compareMode = !this.compareMode;
+      if (this.compareMode) {
+        this.setBranch("starting-point");
+        this.compareBranch = "main";
+      } else {
+        this.compareBranch = "";
+      }
+    },
+    setCompareBranch(value) {
+      this.compareBranch = (value || "").trim();
     },
     // Boot helper: apply whatever's in state right now. The portal's
     // entry-point calls this once after the store is constructed so

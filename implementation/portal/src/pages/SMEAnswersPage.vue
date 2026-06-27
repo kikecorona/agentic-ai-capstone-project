@@ -312,7 +312,7 @@ onMounted(reload);
   flex: 0 0 auto;
 }
 .sme-id-input {
-  width: 160px;
+  width: 200px;
 }
 .pending-scroll {
   background: transparent;

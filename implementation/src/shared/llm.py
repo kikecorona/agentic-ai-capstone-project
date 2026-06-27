@@ -31,10 +31,13 @@ Model knobs live in environment variables (see ``.env.example``):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from functools import lru_cache
 from typing import Any, Iterable
+
+_log = logging.getLogger(__name__)
 
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 from langchain_core.messages import BaseMessage
@@ -69,7 +72,7 @@ def _build_chat_llm(temperature: float, json_mode: bool) -> ChatOllama:
         "model": llm_model(),
         "base_url": ollama_host(),
         "temperature": temperature,
-        "request_timeout": 60.0,
+        "request_timeout": 600.0,
     }
     if json_mode:
         kwargs["format"] = "json"
@@ -119,22 +122,33 @@ class LoggedLLM:
     def invoke(self, messages: Iterable[BaseMessage] | str, **kwargs: Any) -> Any:
         request_text = self._serialise(messages)
         started = time.time()
+        _log.info("[llm] %s — starting", self._module)
+        self._record(
+            request=request_text,
+            response="",
+            started_at=started,
+            latency_ms=0.0,
+        )
         try:
             response = self._llm.invoke(messages, **kwargs)
         except Exception as exc:  # noqa: BLE001 — record then re-raise
+            latency = (time.time() - started) * 1000.0
+            _log.info("[llm] %s — error after %.0f ms: %s", self._module, latency, exc)
             self._record(
                 request=request_text,
                 response="",
-                started_at=started,
-                latency_ms=(time.time() - started) * 1000.0,
+                started_at=time.time(),
+                latency_ms=latency,
                 error=f"{type(exc).__name__}: {exc}",
             )
             raise
+        latency = (time.time() - started) * 1000.0
+        _log.info("[llm] %s — done in %.0f ms", self._module, latency)
         self._record(
             request=request_text,
             response=self._extract_text(response),
-            started_at=started,
-            latency_ms=(time.time() - started) * 1000.0,
+            started_at=time.time(),
+            latency_ms=latency,
         )
         return response
 
@@ -143,22 +157,33 @@ class LoggedLLM:
     async def ainvoke(self, messages: Iterable[BaseMessage] | str, **kwargs: Any) -> Any:
         request_text = self._serialise(messages)
         started = time.time()
+        _log.info("[llm] %s — starting", self._module)
+        self._record(
+            request=request_text,
+            response="",
+            started_at=started,
+            latency_ms=0.0,
+        )
         try:
             response = await self._llm.ainvoke(messages, **kwargs)
         except Exception as exc:  # noqa: BLE001
+            latency = (time.time() - started) * 1000.0
+            _log.info("[llm] %s — error after %.0f ms: %s", self._module, latency, exc)
             self._record(
                 request=request_text,
                 response="",
-                started_at=started,
-                latency_ms=(time.time() - started) * 1000.0,
+                started_at=time.time(),
+                latency_ms=latency,
                 error=f"{type(exc).__name__}: {exc}",
             )
             raise
+        latency = (time.time() - started) * 1000.0
+        _log.info("[llm] %s — done in %.0f ms", self._module, latency)
         self._record(
             request=request_text,
             response=self._extract_text(response),
-            started_at=started,
-            latency_ms=(time.time() - started) * 1000.0,
+            started_at=time.time(),
+            latency_ms=latency,
         )
         return response
 

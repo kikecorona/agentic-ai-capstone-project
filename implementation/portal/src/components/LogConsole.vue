@@ -175,11 +175,14 @@ const FILTER_DEFS = [
 const filters = reactive({ info: true, warn: true, error: true, llm: true });
 
 const TIME_DEFS = [
-  { label: "1 hr",  value: 3600 },
-  { label: "1 day", value: 86400 },
-  { label: "All",   value: 0 },
+  { label: "15 min", value: 900 },
+  { label: "1 hr",   value: 3600 },
+  { label: "1 day",  value: 86400 },
+  { label: "1 wk",   value: 604800 },
+  { label: "1 mo",   value: 2592000 },
+  { label: "All",    value: 0 },
 ];
-const timeFilter = ref(86400);
+const timeFilter = ref(900);
 
 function passes(ev) {
   if (ev.kind === "llm") {
@@ -288,7 +291,14 @@ function formatTsFull(ev) {
 
 function formatMessage(ev) {
   if (ev.kind === "service") return ev.message || "";
-  // LLM: show latency + a head of the response (or the error).
+  // LLM start record: no response yet — show the request snippet instead.
+  if (!ev.response) {
+    const head = (ev.request || "")
+      .replace(/\s+/g, " ")
+      .slice(0, 140);
+    return `starting… · ${head}${head.length === 140 ? "…" : ""}`;
+  }
+  // LLM result record: show latency + response head.
   const ms = Math.round(ev.latency_ms || 0);
   const head = (ev.response || "")
     .replace(/\s+/g, " ")
