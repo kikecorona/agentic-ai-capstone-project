@@ -64,12 +64,13 @@
   .deck { width: 1500px; max-width: 99vw; }
   .slide {
     display: none;
-    width: 100%;
-    min-height: calc(100vh - 100px);
+    width: 1500px;
+    min-height: 1100px;
+    max-height: 1100px;
     background: var(--surface);
     border: 1px solid rgba(255,107,53,0.35);
     border-radius: 4px;
-    padding: 44px 64px 56px;
+    padding: 36px 60px 44px;
     position: relative;
     overflow: hidden;
     box-shadow: 0 0 40px rgba(255,107,53,0.08), 0 16px 64px rgba(0,0,0,.7);
@@ -90,14 +91,14 @@
   .label.p { color: var(--accent4); }
   .label.o { color: var(--accent5); }
   .label.r { color: var(--accent3); }
-  h1 { font-family: 'VT323', monospace; font-size: 80px; font-weight: 400; line-height: 1.05; letter-spacing: .04em; }
-  h2 { font-family: 'VT323', monospace; font-size: 52px; font-weight: 400; line-height: 1.1; margin-bottom: 24px; letter-spacing: .03em; }
-  h3 { font-family: 'VT323', monospace; font-size: 28px; font-weight: 400; margin-bottom: 8px; letter-spacing: .02em; }
-  p  { font-size: 18px; line-height: 1.65; color: var(--muted); }
-  p.lead { font-size: 22px; color: var(--text); }
+  h1 { font-family: 'VT323', monospace; font-size: 84px; font-weight: 400; line-height: 1.05; letter-spacing: .04em; }
+  h2 { font-family: 'VT323', monospace; font-size: 56px; font-weight: 400; line-height: 1.1; margin-bottom: 22px; letter-spacing: .03em; }
+  h3 { font-family: 'VT323', monospace; font-size: 30px; font-weight: 400; margin-bottom: 8px; letter-spacing: .02em; }
+  p  { font-size: 19px; line-height: 1.65; color: var(--muted); }
+  p.lead { font-size: 23px; color: var(--text); }
   ul { list-style: none; }
-  ul li { font-size: 18px; color: var(--muted); padding: 4px 0 4px 20px; position: relative; line-height: 1.55; }
-  ul li::before { content: '→'; position: absolute; left: 0; color: var(--accent); font-size: 14px; top: 6px; }
+  ul li { font-size: 19px; color: var(--muted); padding: 5px 0 5px 20px; position: relative; line-height: 1.55; }
+  ul li::before { content: '→'; position: absolute; left: 0; color: var(--accent); font-size: 14px; top: 7px; }
   ul li strong { color: var(--text); }
   code { font-family: 'JetBrains Mono', 'Roboto Mono', monospace; font-size: 13px; background: #2c2c3e; border: 1px solid rgba(255,107,53,0.25); border-radius: 2px; padding: 1px 6px; color: var(--accent4); }
 
@@ -110,7 +111,7 @@
   .c-side-r{ grid-template-columns: 1fr 1.35fr; }
 
   /* ── CARDS ── */
-  .card { background: var(--surface2); border: 1px solid rgba(255,107,53,0.18); border-radius: 4px; padding: 18px 22px; }
+  .card { background: var(--surface2); border: 1px solid rgba(255,107,53,0.18); border-radius: 4px; padding: 20px 24px; }
   .card.ab { border-left: 3px solid var(--accent4); }
   .card.ag { border-left: 3px solid var(--accent2); }
   .card.ap { border-left: 3px solid var(--accent5); }
@@ -186,49 +187,49 @@
   .mwrap svg marker path { fill: rgba(255,255,255,0.35) !important; stroke: rgba(255,255,255,0.35) !important; }
   /* Bigger text inside diagrams */
   .mwrap svg text,
-  .mwrap svg text tspan { font-size: 20px !important; }
+  .mwrap svg text tspan { font-size: 22px !important; }
   .mwrap svg foreignObject div,
   .mwrap svg foreignObject p,
-  .mwrap svg foreignObject span { font-size: 19px !important; }
+  .mwrap svg foreignObject span { font-size: 21px !important; }
 
-  /* ── ZOOM CONTROLS — sits in a wrapper div outside the scrollable mwrap ── */
+  /* ── ZOOM CONTROLS — floating top-left, no background ── */
   .zoom-bar {
     position: absolute;
-    top: 8px; left: 8px;
+    top: 6px; left: 6px;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     z-index: 10;
-    border: 1px solid rgba(200,208,218,0.4);
-    border-radius: 8px;
-    padding: 4px 8px;
-    backdrop-filter: blur(8px);
-    box-shadow: 0 2px 8px rgba(0,0,0,.12);
+    opacity: 0.3;
+    transition: opacity 0.2s;
   }
+  .zoom-bar:hover,
+  .zoom-bar:focus-within { opacity: 1; }
   .zoom-bar label {
-    font-size: 11px;
-    color: #57606a;
+    font-size: 10px;
+    color: rgba(255,255,255,0.5);
     font-family: 'SF Mono', Consolas, monospace;
   }
   .zoom-bar input[type=number] {
-    width: 54px;
-    height: 26px;
-    border: 1px solid rgba(200,208,218,0.3);
-    border-radius: 5px;
+    width: 48px;
+    height: 22px;
+    border: none;
+    border-bottom: 1px solid rgba(255,255,255,0.35);
+    border-radius: 0;
     background: transparent;
-    color: #fff;
-    font-size: 13px;
+    color: rgba(255,255,255,0.85);
+    font-size: 11px;
     font-family: 'SF Mono', Consolas, monospace;
     text-align: right;
-    padding: 0 4px;
+    padding: 0 2px;
     outline: none;
   }
-  .zoom-bar input[type=number]:focus { border-color: #0969da; box-shadow: 0 0 0 2px rgba(9,105,218,.2); }
+  .zoom-bar input[type=number]:focus { border-bottom-color: rgba(255,255,255,0.9); }
   .zoom-bar input[type=number]::-webkit-inner-spin-button,
   .zoom-bar input[type=number]::-webkit-outer-spin-button { opacity: 1; filter: invert(1); }
-  .mwrap.scroll { max-height: calc(100vh - 260px); }
-  .mwrap.tall   { max-height: calc(100vh - 220px); }
-  .mwrap.short  { max-height: 320px; }
+  .mwrap.scroll { max-height: 900px; }
+  .mwrap.tall   { max-height: 940px; }
+  .mwrap.short  { max-height: 300px; }
 
   /* ── SCREENSHOT ── */
   .shot {
@@ -252,24 +253,24 @@
   td { padding: 8px 12px; border-bottom: 1px solid rgba(48,54,61,.4); color: var(--muted); vertical-align: top; }
   td strong { color: var(--text); }
   tr:last-child td { border-bottom: none; }
-  .tbx { background: var(--surface2); border: 1px dashed var(--border); border-radius: 8px; padding: 16px 20px; font-size: 14px; color: var(--muted); font-style: italic; }
+  .tbx { background: var(--surface2); border: 1px dashed var(--border); border-radius: 8px; padding: 18px 22px; font-size: 16px; color: var(--muted); font-style: italic; }
   .sec-hdr { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
   .sec-hdr .line { flex: 1; height: 1px; background: var(--border); }
   .gradient-text { background: linear-gradient(90deg, var(--accent), var(--accent4)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
 
   /* ── OBJECTIVE NUMBER ── */
   .obj-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; flex: 1; }
-  .obj-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 22px 24px; display: flex; gap: 16px; align-items: flex-start; }
-  .obj-num { font-size: 32px; font-weight: 700; color: var(--accent); opacity: .4; line-height: 1; flex-shrink: 0; width: 36px; }
-  .obj-body h3 { font-size: 20px; margin-bottom: 6px; }
-  .obj-body p { font-size: 18px; }
+  .obj-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 24px 26px; display: flex; gap: 16px; align-items: flex-start; }
+  .obj-num { font-size: 34px; font-weight: 700; color: var(--accent); opacity: .4; line-height: 1; flex-shrink: 0; width: 38px; }
+  .obj-body h3 { font-size: 22px; margin-bottom: 6px; }
+  .obj-body p { font-size: 19px; }
 
   /* ── PRINCIPLE ITEM ── */
   .prin-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; flex: 1; }
-  .prin-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 22px 24px; }
-  .prin-icon { font-size: 26px; margin-bottom: 10px; }
-  .prin-item h3 { font-size: 18px; margin-bottom: 8px; }
-  .prin-item p { font-size: 17px; }
+  .prin-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 24px 26px; }
+  .prin-icon { font-size: 28px; margin-bottom: 10px; }
+  .prin-item h3 { font-size: 20px; margin-bottom: 8px; }
+  .prin-item p { font-size: 18px; }
 </style>
 </head>
 <body>
@@ -283,7 +284,7 @@
   <div style="flex:1; display:flex; flex-direction:column; justify-content:center;">
     <div class="sec-hdr">
       <div class="line"></div>
-      <span class="badge bb">Agentic AI · Capstone Project · Enrique Corona</span>
+      <span class="badge bb">Agentic AI - Capstone Project · Carnegie Mellon Universitiy · Enrique Corona</span>
       <div class="line"></div>
     </div>
     <h1 style="margin-bottom:18px;"><span class="gradient-text">Multi-Agent Knowledge</span><br>Base System</h1>
@@ -539,7 +540,7 @@
   <div class="slide-num">7 / 23</div>
   <div class="label">Architecture</div>
   <h2>High-Level Architecture Diagram</h2>
-  <div class="mwrap scroll" style="flex:1;" data-zoom="4">
+  <div class="mwrap scroll" style="flex:1;" data-zoom="4" data-scroll-x="-500" data-scroll-y="200">
     <pre class="mermaid">
 flowchart LR
     Portal(["Documentation Portal\nchatbot + SME UI\n+ rendered docs"])
@@ -636,7 +637,7 @@ flowchart LR
   <div class="label r">RAG Service</div>
   <h2>Auto-RAG Loop — Self-Correcting Retrieval</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
-    <div class="mwrap scroll" style="width:100%;max-height:350px;" data-zoom="2.5">
+    <div class="mwrap scroll" style="width:100%;max-height:350px;" data-zoom="2.5" data-scroll-x="0" data-scroll-y="220">
       <pre class="mermaid">
 flowchart LR
     Q(["RAG_MCP.retrieve\nquery, domain_filter, mode"]) --> D{"Decide:\nretrieve?"}
@@ -665,10 +666,10 @@ flowchart LR
       <div class="card ar">
         <div class="label r">4-Node LangGraph StateGraph</div>
         <ul>
-          <li><strong>Decide</strong> — classify into no_retrieval | retrieve; honour domain_filter</li>
-          <li><strong>Retrieve</strong> — top-K=10 similarity search; domain filter pushed to vector query</li>
-          <li><strong>Grade</strong> — LLM scores each doc 0-3; survivors go to answer generation</li>
-          <li><strong>Rewrite</strong> — reformulates query; may widen domain_filter (bp → both)</li>
+          <li><strong>Decide</strong> — no_retrieval vs. retrieve; applies domain_filter</li>
+          <li><strong>Retrieve</strong> — top-K=10 similarity; domain filter on vector query</li>
+          <li><strong>Grade</strong> — LLM scores docs 0–3; survivors feed answer generation</li>
+          <li><strong>Rewrite</strong> — reformulates query; widens domain_filter if needed</li>
         </ul>
       </div>
       <div class="card ab">
@@ -676,18 +677,18 @@ flowchart LR
         <ul>
           <li>Bounded to <strong>R=2 rewrites</strong></li>
           <li><code>ok</code> — faithfulness + answerability both pass</li>
-          <li><code>low_confidence</code> — best-effort answer, rewrites exhausted</li>
-          <li><code>exhausted</code> — no usable evidence at all</li>
+          <li><code>low_confidence</code> — best-effort, rewrites exhausted</li>
+          <li><code>exhausted</code> — no usable evidence found</li>
         </ul>
       </div>
       <div class="card ao">
         <div class="label o">Index-Quality Feedback Loop</div>
-        <p>Chunks that repeatedly fail grading emit an <strong>index-quality flag</strong> in the retrieval trail. The calling specialist re-indexes that source on the next refresh — closing the loop between retrieval and indexing.</p>
+        <p>Repeated grade failures emit an <strong>index-quality flag</strong>. Caller re-indexes that source on the next refresh.</p>
       </div>
       <div class="card ag">
         <div class="label g">Two-Axis Re-Grade</div>
-        <p><strong>Faithfulness</strong> — every claim supported by a cited source (hallucination detection).<br>
-        <strong>Answerability</strong> — the answer substantively addresses the query.</p>
+        <p><strong>Faithfulness</strong> — claims backed by cited sources.<br>
+        <strong>Answerability</strong> — answer addresses the query.</p>
       </div>
     </div>
   </div>
@@ -862,7 +863,7 @@ flowchart TB
   <div class="label p">System Design Service</div>
   <h2>SD Service — ReAct Loop &amp; analyze_code</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
-    <div class="mwrap scroll" style="width:100%;max-height:400px;" data-zoom="2.5">
+    <div class="mwrap scroll" style="width:100%;max-height:400px;" data-zoom="2.5" data-scroll-x="0" data-scroll-y="200">
       <pre class="mermaid">
 flowchart LR
     Trig(["Update Trigger"]) --> Pull["pull source\nvia GitHub MCP"]
@@ -1028,7 +1029,7 @@ flowchart TB
   <div class="label g">Business + Product Service</div>
   <h2>BP Service — ReAct Loop</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
-    <div class="mwrap scroll" style="width:100%;max-height:400px;" data-zoom="2.5">
+    <div class="mwrap scroll" style="width:100%;max-height:400px;" data-zoom="2.5" data-scroll-x="0" data-scroll-y="200">
       <pre class="mermaid">
 flowchart LR
     Trig(["Update Trigger"]) --> Ingest["ingest input docs\nvia GitHub MCP"]
@@ -1314,12 +1315,12 @@ sequenceDiagram
 
     <!-- Top-right: Screenshot 1 -->
     <div class="shot" style="min-height:200px; padding:0; overflow:hidden;">
-      <img src="images/dp-1.png" alt="Documentation Portal screenshot 1" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+      <img src="images/dp-1.png" alt="Documentation Portal screenshot 1" style="width:100%;height:100%;object-fit:contain;border-radius:8px;" />
     </div>
 
     <!-- Bottom-left: Screenshot 2 -->
     <div class="shot" style="min-height:140px; padding:0; overflow:hidden;">
-      <img src="images/dp-2.png" alt="Documentation Portal screenshot 2" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+      <img src="images/dp-2.png" alt="Documentation Portal screenshot 2" style="width:100%;height:100%;object-fit:contain;border-radius:8px;" />
     </div>
 
     <!-- Bottom-right: Key Metrics Tracked -->
@@ -1388,7 +1389,7 @@ sequenceDiagram
     <div class="card">
       <div class="label" style="color:var(--accent2);">Evaluation</div>
       <ul>
-        <li><strong>No eval harness</strong> — hallucination checks are manual spot-checks</li>
+        <li><strong>No golden-set benchmark</strong> — RAG grades per-answer faithfulness, but no regression suite tracks quality over time</li>
         <li><strong>Monitoring MCP absent</strong> — ToT falls back to code references for dep-graph scoring</li>
       </ul>
     </div>
@@ -1412,26 +1413,26 @@ sequenceDiagram
   <div class="slide-num">23 / 24</div>
   <div class="label ag">Results</div>
   <h2>Results</h2>
-  <div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:16px;flex:1;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr calc(1fr - 25px);gap:16px;flex:1;">
     <div class="card ag" style="display:flex;flex-direction:column;">
       <div class="label g">Key Results</div>
       <ul>
-        <li><strong>✏️</strong> Result #1 — add your finding here</li>
-        <li><strong>✏️</strong> Result #2 — add your finding here</li>
-        <li><strong>✏️</strong> Result #3 — add your finding here</li>
-        <li><strong>✏️</strong> Result #4 — add your finding here</li>
-        <li><strong>✏️</strong> Result #5 — add your finding here</li>
-        <li><strong>✏️</strong> Result #6 — add your finding here</li>
+        <li>End-to-end auto-documentation running on <strong>llama3.1:8b</strong> (small, local LLM) · <strong>1,500 LLM calls · 0 errors</strong></li>
+        <li><strong>44 pages enriched</strong> + 3 stub pages created from discovered gaps</li>
+        <li><strong>Cross-reference health: 100%</strong> — all 22 SD↔BP links resolved, 0 broken</li>
+        <li><strong>88.4% re-grade pass rate</strong> — Auto-RAG self-correction loop effective</li>
+        <li><strong>ToT success rate: 82.5%</strong> — chunking operating in confident territory</li>
+        <li><strong>11 SME questions generated</strong> (4 answered, 7 pending) · 18.8% index-quality hit rate driving re-enrichment</li>
       </ul>
     </div>
     <div class="shot" style="padding:0;overflow:hidden;">
-      <img src="images/dp-3.png" alt="Screenshot 1" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+      <img src="images/dp-3.png" alt="Screenshot 1" style="width:100%;height:100%;object-fit:contain;border-radius:8px;" />
     </div>
     <div class="shot" style="padding:0;overflow:hidden;">
-      <img src="images/dp-4.png" alt="Screenshot 2" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+      <img src="images/dp-4.png" alt="Screenshot 2" style="width:100%;height:100%;object-fit:contain;border-radius:8px;" />
     </div>
     <div class="shot" style="padding:0;overflow:hidden;">
-      <img src="images/dp-5.png" alt="Screenshot 3" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+      <img src="images/dp-5.png" alt="Screenshot 3" style="width:100%;height:100%;object-fit:contain;border-radius:8px;" />
     </div>
   </div>
   </div>
@@ -1546,6 +1547,15 @@ function navigate(dir) {
   next.style.display = 'flex';
   updateNav();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  // Re-apply stored scroll positions now that the slide is visible.
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      next.querySelectorAll('.mwrap[data-init-x], .mwrap[data-init-y]').forEach(function(wrap) {
+        wrap.scrollLeft = parseInt(wrap.getAttribute('data-init-x') || '0');
+        wrap.scrollTop  = parseInt(wrap.getAttribute('data-init-y') || '0');
+      });
+    });
+  });
 }
 
 document.addEventListener('keydown', function(e) {
@@ -1570,25 +1580,63 @@ function initZoomControls() {
       var s = pct / 100;
       svg.style.width  = (baseW * s) + 'px';
       svg.style.height = (baseH * s) + 'px';
-      input.value = pct;
-      // Centre the diagram in the scroll container after resize
-      wrap.scrollLeft = (wrap.scrollWidth - wrap.clientWidth) / 2;
-      wrap.scrollTop  = (wrap.scrollHeight - wrap.clientHeight) / 2;
+      zoomInput.value = pct;
+    }
+
+    function applyScroll() {
+      var sx = parseInt(xInput.value) || 0;
+      var sy = parseInt(yInput.value) || 0;
+      wrap.scrollLeft = sx;
+      wrap.scrollTop  = sy;
+      // Stamp so navigate() can restore position when slide becomes visible.
+      wrap.setAttribute('data-init-x', sx);
+      wrap.setAttribute('data-init-y', sy);
+    }
+
+    function makeNumInput(min, max, step, val) {
+      var el = document.createElement('input');
+      el.type = 'number'; el.min = min; el.max = max; el.step = step; el.value = val;
+      el.addEventListener('keydown', function(e) { e.stopPropagation(); });
+      return el;
+    }
+
+    function makeSep(ch) {
+      var s = document.createElement('span');
+      s.textContent = ch || '·';
+      s.style.cssText = 'color:rgba(255,255,255,0.3);font-size:11px;';
+      return s;
     }
 
     var bar = document.createElement('div');
     bar.className = 'zoom-bar';
 
-    var input = document.createElement('input');
-    input.type = 'number';
-    input.min  = '10';
-    input.max  = '500';
-    input.step = '25';
-    input.value = defaultPct;
-    input.addEventListener('change', function() { applyPct(parseInt(this.value) || defaultPct); });
-    input.addEventListener('keydown', function(e) { e.stopPropagation(); });
+    // Zoom field
+    var zoomInput = makeNumInput('10', '500', '25', defaultPct);
+    zoomInput.addEventListener('change', function() { applyPct(parseInt(this.value) || defaultPct); });
 
-    bar.appendChild(input);
+    // X / Y scroll fields — shown on all diagrams, default 0
+    var defaultX = wrap.hasAttribute('data-scroll-x') ? parseInt(wrap.getAttribute('data-scroll-x')) : 0;
+    var defaultY = wrap.hasAttribute('data-scroll-y') ? parseInt(wrap.getAttribute('data-scroll-y')) : 0;
+
+    var xInput = makeNumInput('-9999', '9999', '50', defaultX);
+    var yInput = makeNumInput('-9999', '9999', '50', defaultY);
+    xInput.addEventListener('change', applyScroll);
+    yInput.addEventListener('change', applyScroll);
+
+    function makePct() {
+      var s = document.createElement('span');
+      s.textContent = '%';
+      s.style.cssText = 'color:rgba(255,255,255,0.5);font-size:11px;';
+      return s;
+    }
+
+    // Order: X , Y · zoom %
+    bar.appendChild(xInput);
+    bar.appendChild(makeSep(','));
+    bar.appendChild(yInput);
+    bar.appendChild(makeSep('·'));
+    bar.appendChild(zoomInput);
+    bar.appendChild(makePct());
 
     // Place the zoom bar in a wrapper OUTSIDE the scrollable mwrap so it
     // stays fixed in the top-left corner regardless of scroll position.
@@ -1606,6 +1654,12 @@ function initZoomControls() {
     anchor.appendChild(bar);
 
     applyPct(defaultPct);
+    // Defer scroll: scrollWidth/Height aren't reliable until the browser
+    // has finished laying out the resized SVG. Two rAF frames guarantees
+    // the layout pass has completed before we read scroll dimensions.
+    requestAnimationFrame(function() {
+      requestAnimationFrame(applyScroll);
+    });
   });
 }
 
