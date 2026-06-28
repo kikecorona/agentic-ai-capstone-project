@@ -24,8 +24,9 @@
     --muted:   #9a8a7a;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; overflow-x: hidden; }
   body {
+    overflow-x: hidden;
     background: #11121f;
     font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
     color: var(--text);
@@ -183,10 +184,13 @@
   /* ── MERMAID ── */
   .mwrap {
     background: var(--surface2); border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 12px; padding: 18px; overflow-x: auto;
+    border-radius: 12px; padding: 28px 20px; overflow-x: auto;
     display: flex; align-items: flex-start; justify-content: center; margin-bottom: 8px;
+    position: relative; width: 100vw; left: 50%; transform: translateX(-50%);
   }
-  .mwrap svg { display: block; background: var(--surface2); }
+  .mwrap svg { display: block; background: var(--surface2); width: 100% !important; max-width: 1200px !important; height: auto !important; min-height: 300px; }
+  .mwrap.xl { max-width: none; }
+  .mwrap.xl svg { min-height: 560px; max-width: none !important; }
   .mwrap svg text, .mwrap svg text tspan,
   .mwrap svg .nodeLabel, .mwrap svg .nodeLabel *,
   .mwrap svg .label, .mwrap svg .label *,
@@ -574,8 +578,9 @@ flowchart LR
 
   <h3>SME Interaction and Re-Integration</h3>
 
-  <div class="mwrap">
+  <div class="mwrap xl">
     <pre class="mermaid">
+%%{init: {'sequence': {'actorMargin': 100, 'width': 200, 'messageMargin': 40, 'noteMargin': 20, 'mirrorActors': true}}}%%
 sequenceDiagram
     participant Trig as Update Trigger
     participant OC as Orchestrator
@@ -987,11 +992,11 @@ sequenceDiagram
 
   <p>The repository includes:</p>
   <ol>
-    <li><strong>Project documentation</strong> — <code>PROJECT.md</code> (problem, reasoning loops, RAG design, ToT), <code>PROJECT_ARCHITECTURE.md</code> (high-level architecture, guardrails, trade-offs), <code>PROJECT_LOW_LEVEL_DESIGN.md</code> (per-service designs, SME interaction, evaluation strategy, portal design)</li>
-    <li><strong>Implementation</strong> — full working POC under <code>implementation/</code> including the Orchestrator (FastAPI), B&amp;P Service, SD Service, RAG Service (LangGraph + ChromaDB), and Documentation Portal (Vue.js + Quasar)</li>
-    <li><strong>Synthetic data</strong> — Pear Store with 10 services, endpoints, and product documentation at varying quality tiers used to exercise the full pipeline</li>
-    <li><strong>Playground</strong> — <code>playground/</code> contains standalone experiments with LangGraph, ReAct, and GitHub MCP that informed the final design</li>
-    <li><strong>Setup and usage instructions</strong> — <code>implementation/README.md</code> covers prerequisites, environment setup, and how to boot the full stack locally</li>
+    <li><strong>Project documentation</strong> — <a href="https://github.com/kikecorona/agentic-ai-capstone-project/blob/main/PROJECT.md"><code>PROJECT.md</code></a> (problem, reasoning loops, RAG design, ToT), <a href="https://github.com/kikecorona/agentic-ai-capstone-project/blob/main/PROJECT_ARCHITECTURE.md"><code>PROJECT_ARCHITECTURE.md</code></a> (high-level architecture, guardrails, trade-offs), <a href="https://github.com/kikecorona/agentic-ai-capstone-project/blob/main/PROJECT_LOW_LEVEL_DESIGN.md"><code>PROJECT_LOW_LEVEL_DESIGN.md</code></a> (per-service designs, SME interaction, evaluation strategy, portal design)</li>
+    <li><strong>Implementation</strong> — full working POC under <a href="https://github.com/kikecorona/agentic-ai-capstone-project/tree/main/implementation"><code>implementation/</code></a> including the Orchestrator (FastAPI), B&amp;P Service, SD Service, RAG Service (LangGraph + ChromaDB), and Documentation Portal (Vue.js + Quasar)</li>
+    <li><strong>Synthetic data</strong> — <a href="https://github.com/kikecorona/pear-store">Pear Store</a> with 10 services, endpoints, and product documentation at varying quality tiers used to exercise the full pipeline</li>
+    <li><strong>Playground</strong> — <a href="https://github.com/kikecorona/agentic-ai-capstone-project/tree/main/playground"><code>playground/</code></a> contains standalone experiments with LangGraph, ReAct, and GitHub MCP that informed the final design</li>
+    <li><strong>Setup and usage instructions</strong> — <a href="https://github.com/kikecorona/agentic-ai-capstone-project/blob/main/implementation/README.md"><code>implementation/README.md</code></a> covers prerequisites, environment setup, and how to boot the full stack locally</li>
   </ol>
 </section>
 

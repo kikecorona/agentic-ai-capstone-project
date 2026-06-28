@@ -232,4 +232,4 @@ __marimo__/
 *.db-wal
 implementation/data/
 
-
+.vite
