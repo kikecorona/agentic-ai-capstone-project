@@ -1,0 +1,33 @@
+%%{init: {'flowchart': {'defaultRenderer': 'dagre', 'curve': 'step'}}}%%
+flowchart LR
+    Start(["_refresh_one_page"]) --> Read["read existing page"]
+    Read --> Resolve["resolve owning service\n(DB-naming convention)"]
+    Resolve --> Pull["analyze_code\nproduces analysis_summary"]
+    Pull --> Skip{"page_hash and\nside_info_revision\nboth unchanged?"}
+    Skip -->|"yes, not force"| ExitU(["span = unchanged"])
+    Skip -->|"no, or force"| Hint["classify_by_path\npicks page_kind hint"]
+    Hint --> Detect["detect_gaps LLM\nclassify + propose sections\nstrategy = source or rag per gap"]
+    Detect --> Loop["for each gap"]
+    Loop --> Strat{"strategy?"}
+    Strat -->|source| Compose["prose-LLM\non analysis JSON"]
+    Strat -->|rag| Retrieve["RAG_MCP.retrieve\ndomain_filter=sd"]
+    Retrieve --> Quality{"ok?"}
+    Quality -->|ok| Filled
+    Quality -->|"low_conf or exhausted"| SME["SME-PLACEHOLDER block\nquestion_id fenced"]
+    Compose --> Filled["FilledGap"]
+    SME --> Filled
+    Filled --> Loop
+    Loop --> Merge["merge_into_existing\nSAFETY: never overwrite\nsubstantive prose"]
+    Merge --> Index["RAG_MCP.index domain=sd"]
+    Index --> Persist["upsert doc_index\nside_info_revision\nanswered_sme_blocks"]
+    Persist --> ExitE(["span = enriched or escalated_only"])
+    classDef node fill:#E8F5E9,stroke:#2E7D32,color:#000000
+    classDef llm fill:#E3F2FD,stroke:#1565C0,color:#000000
+    classDef decision fill:#FFF3E0,stroke:#EF6C00,color:#000000
+    classDef boundary fill:#FFF9C4,stroke:#F57F17,color:#000000
+    classDef sme fill:#FCE4EC,stroke:#AD1457,color:#000000
+    class Read,Resolve,Pull,Hint,Loop,Retrieve,Merge,Index,Persist,Filled node
+    class Detect,Compose llm
+    class Skip,Strat,Quality decision
+    class Start,ExitU,ExitE boundary
+    class SME sme

@@ -1,0 +1,83 @@
+%%{init: {'flowchart': {'defaultRenderer': 'dagre', 'curve': 'step'}}}%%
+flowchart LR
+    Portal(["Documentation Portal\nchatbot + SME UI\n+ rendered docs"])
+    Trigger(["Update Trigger\nschedule + GH webhook"])
+    LLM["Local LLM\nllama3.1:8b"]
+    GH(["GitHub\nBP docs + SD docs\n+ source code"])
+    GH_MCP["GitHub MCP"]
+    MON_MCP["Monitoring MCP"]
+    OTEL_MCP["OTel MCP\naudit + monitoring"]
+
+    subgraph OC ["Orchestrator"]
+        OC_Service["Orchestrator Service\nReAct"]
+        OC_DS[("Pending SME questions\n+ SME registry")]
+        OC_Service --- OC_DS
+    end
+
+    subgraph BP ["Business + Product"]
+        BP_MCP["BP MCP"]
+        BP_Service["BP Service\nReAct"]
+        BP_DS[("BP doc index\n+ sources inventory")]
+        BP_MCP --- BP_Service
+        BP_Service --- BP_DS
+    end
+
+    subgraph SD ["System Design"]
+        SD_MCP["SD MCP"]
+        SD_Service["SD Service\nReAct + ToT"]
+        SD_ToT[/"ToT loop\ndep graph"/]
+        SD_DS[("SD doc index\n+ sources inventory")]
+        SD_MCP --- SD_Service
+        SD_Service --- SD_ToT
+        SD_Service --- SD_DS
+    end
+
+    subgraph RAG ["RAG Service"]
+        RAG_MCP["RAG MCP"]
+        RAG_Service["RAG Service\nAuto-RAG + ToT chunking"]
+        RAG_ToT[/"ToT loop\nchunking strategy"/]
+        E_DS[("Shared Embeddings DB\nchunks tagged by domain")]
+        RAG_MCP --- RAG_Service
+        RAG_Service --- RAG_ToT
+        RAG_Service --- E_DS
+    end
+
+    Portal --- OC_Service
+    Portal --- GH
+    Trigger --- OC_Service
+    GH --- Trigger
+    OC_Service --- LLM
+    OC_Service --- BP_MCP
+    OC_Service --- SD_MCP
+    BP_Service --- LLM
+    BP_Service --- SD_MCP
+    BP_Service --- GH_MCP
+    BP_Service --- RAG_MCP
+    SD_Service --- LLM
+    SD_ToT --- LLM
+    SD_Service --- BP_MCP
+    SD_Service --- GH_MCP
+    SD_Service --- RAG_MCP
+    SD_Service --- MON_MCP
+    SD_ToT --- MON_MCP
+    RAG_Service --- LLM
+    RAG_ToT --- LLM
+    GH_MCP --- GH
+    OC_Service --- OTEL_MCP
+    BP_Service --- OTEL_MCP
+    SD_Service --- OTEL_MCP
+    RAG_Service --- OTEL_MCP
+    classDef oc fill:#E3F2FD,stroke:#1565C0,color:#000000
+    classDef bp fill:#E8F5E9,stroke:#2E7D32,color:#000000
+    classDef sd fill:#FFF3E0,stroke:#EF6C00,color:#000000
+    classDef rag fill:#E0F7FA,stroke:#00838F,color:#000000
+    classDef tot fill:#FCE4EC,stroke:#AD1457,color:#000000
+    classDef portal fill:#FFF9C4,stroke:#F57F17,color:#000000
+    classDef trigger fill:#FFEBEE,stroke:#C62828,color:#000000
+    class OC_Service,OC_DS oc
+    class BP_MCP,BP_Service,BP_DS bp
+    class SD_MCP,SD_Service,SD_DS sd
+    class RAG_MCP,RAG_Service,E_DS rag
+    class SD_ToT,RAG_ToT tot
+    class Portal portal
+    class Trigger trigger

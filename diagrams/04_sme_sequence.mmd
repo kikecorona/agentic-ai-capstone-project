@@ -1,0 +1,24 @@
+sequenceDiagram
+    participant Trig as Update Trigger
+    participant OC as Orchestrator
+    participant Spec as BP / SD Service
+    participant Docs as BP / SD Pages (GitHub)
+    participant E as Shared Embeddings DB
+    participant Portal as Documentation Portal
+    actor SME
+
+    Trig ->> OC: Refresh event
+    OC ->> Spec: Dispatch refresh task
+    Note over OC,Docs: Background build hits unresolvable gap — Auto-RAG exhausted, dep-graph tie, dynamic route, or cross-ref unresolved
+    Spec ->> Docs: Commit page with SME-PLACEHOLDER block(s)
+    Spec -->> OC: Escalation envelope (question_id, originating_page, best_guess, trail)
+    OC ->> OC: Queue, dedup by topic, resolve SME from registry
+    OC -->> Portal: Surface pending question + context + best guess
+    SME ->> Portal: Reply with answer
+    Portal ->> OC: POST /v1/sme-replies
+    OC ->> Docs: Persist as new BP document
+    OC ->> Spec: Patch each originating page (placeholder to SME text + link)
+    OC ->> Spec: Re-index new doc + patched pages
+    Spec ->> E: Refresh embeddings (domain-tagged)
+    OC ->> OC: Remove from pending_sme_questions
+    Note over Trig,SME: Future queries on same topic now hit enriched, grounded retrieval — page no longer shows a gap

@@ -1,0 +1,22 @@
+%%{init: {'flowchart': {'defaultRenderer': 'dagre', 'curve': 'step'}}}%%
+flowchart LR
+    Q(["RAG_MCP.retrieve\nquery, domain_filter, mode"]) --> D{"Decide:\nretrieve?"}
+    D -->|no retrieval| Gen["Generate answer"]
+    D -->|retrieve| R["Retrieve top-K\nShared Embeddings DB\n+ domain_filter"]
+    R --> G{"Grade\nrelevance"}
+    G -->|"≥ threshold"| Gen
+    G -->|"all below,\nrewrites left"| RW["Rewrite query\nmaybe widen filter"]
+    G -->|"all below,\nbudget exhausted"| FB["Build response\nlow_confidence or exhausted"]
+    RW --> R
+    Gen --> CF{"Re-grade:\nfaithful?\nanswers query?"}
+    CF -->|both pass| OK["status = ok"]
+    CF -->|"fail, retry left"| RW
+    CF -->|"fail, budget exhausted"| FB
+    OK --> Out(["Return to caller"])
+    FB --> Out
+    classDef node fill:#E8F5E9,stroke:#2E7D32,color:#000000
+    classDef decision fill:#FFF3E0,stroke:#EF6C00,color:#000000
+    classDef boundary fill:#FFF9C4,stroke:#F57F17,color:#000000
+    class R,RW,Gen,OK,FB node
+    class D,G,CF decision
+    class Q,Out boundary
