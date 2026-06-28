@@ -17,5 +17,5 @@ I'm proposing to implement a Research Agent that can help our leadership, develo
 * [Implementation](implementation)
 * [Presentation](presentation.html)
 * [Final report](final_report.html)
-* [Elevator pitch (Teaser)](https://youtu.be/KjNkRqahcGI)
+* [Elevator pitch (Teaser)](https://youtu.be/TgHaNjjtWeY)
 * [Presentation video](https://youtu.be/W8MIqu0vDVk)
