@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<title>Final Capstone Report — Multi-Agent Knowledge Base System</title>
+<script src="mermaid-dist/mermaid.min.js"></script>
+<script src="mermaid-dist/elk-bundle.js"></script>
+<style>
+  :root {
+    --bg:      #1a1a2e;
+    --surface: #1c1f33;
+    --surface2:#0e0f1a;
+    --border:  rgba(255,107,53,0.25);
+    --accent:  #ff6b35;
+    --accent2: #7cdb40;
+    --accent3: #ffd600;
+    --accent4: #00acc1;
+    --accent5: #ffa657;
+    --text:    #f5e6d3;
+    --muted:   #9a8a7a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: #11121f;
+    font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 16px;
+  }
+
+  /* ── HEADER ── */
+  .report-header {
+    background: var(--surface2);
+    border-bottom: 2px solid var(--accent);
+    padding: 52px 24px 44px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .report-header::before {
+    content: '';
+    position: absolute; top: -80px; left: 50%;
+    transform: translateX(-50%);
+    width: 600px; height: 300px;
+    background: radial-gradient(circle, rgba(255,107,53,.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .report-header .institution {
+    font-family: 'VT323', monospace;
+    font-size: 20px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 18px;
+  }
+  .report-header h1 {
+    font-family: 'VT323', monospace;
+    font-size: 60px; font-weight: 400; line-height: 1.1;
+    letter-spacing: .04em; margin-bottom: 12px;
+  }
+  .gradient-text {
+    background: linear-gradient(90deg, var(--accent), var(--accent4));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .report-header .subtitle { font-size: 15px; color: var(--muted); margin-bottom: 24px; }
+  .report-header .meta {
+    display: flex; gap: 28px; justify-content: center; flex-wrap: wrap;
+    font-size: 14px; color: var(--muted);
+  }
+  .report-header .meta span { color: var(--text); }
+
+  /* ── TOC ── */
+  .toc-wrap { background: var(--surface); border-bottom: 1px solid var(--border); padding: 28px 24px; }
+  .toc { max-width: 900px; margin: 0 auto; }
+  .toc ol {
+    list-style: none; display: grid;
+    grid-template-columns: 1fr 1fr; gap: 6px 48px;
+    counter-reset: toc; margin-top: 12px;
+  }
+  .toc ol li { counter-increment: toc; }
+  .toc ol li a { color: var(--accent4); text-decoration: none; font-size: 14px; }
+  .toc ol li a:hover { color: var(--accent); }
+  .toc ol li a::before { content: counter(toc, decimal-leading-zero) ". "; color: var(--accent); font-size: 13px; }
+
+  /* ── LAYOUT ── */
+  .content { max-width: 900px; margin: 0 auto; padding: 0 24px 80px; }
+
+  /* ── SECTION ── */
+  section { padding-top: 56px; border-top: 1px solid var(--border); margin-top: 56px; }
+  section:first-of-type { margin-top: 56px; }
+  .label {
+    font-family: 'VT323', monospace; font-size: 18px; font-weight: 400;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-bottom: 10px;
+  }
+  .label.g { color: var(--accent2); }
+  .label.p { color: var(--accent4); }
+  .label.o { color: var(--accent5); }
+  .label.r { color: var(--accent3); }
+  section h2 {
+    font-family: 'VT323', monospace; font-size: 52px; font-weight: 400;
+    line-height: 1.1; letter-spacing: .03em; margin-bottom: 22px;
+  }
+  h3 { font-family: 'VT323', monospace; font-size: 30px; font-weight: 400; margin: 28px 0 10px; letter-spacing: .02em; }
+
+  /* ── PROSE ── */
+  p { margin-bottom: 16px; color: var(--muted); font-size: 17px; line-height: 1.7; }
+  p.lead { color: var(--text); font-size: 19px; }
+  strong { color: var(--text); }
+  a { color: var(--accent4); text-decoration: none; }
+  a:hover { color: var(--accent); }
+  ul { list-style: none; padding-left: 0; margin-bottom: 16px; }
+  ul li { font-size: 17px; color: var(--muted); padding: 4px 0 4px 22px; position: relative; line-height: 1.55; }
+  ul li::before { content: '→'; position: absolute; left: 0; color: var(--accent); font-size: 14px; top: 7px; }
+  ul li strong { color: var(--text); }
+  ol { list-style: decimal; padding-left: 20px; margin-bottom: 16px; }
+  ol li { font-size: 17px; color: var(--muted); margin-bottom: 8px; }
+  ol li strong { color: var(--text); }
+  code {
+    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    background: #2c2c3e; border: 1px solid rgba(255,107,53,0.25);
+    border-radius: 2px; padding: 1px 6px; color: var(--accent4);
+  }
+
+  /* ── CALLOUT ── */
+  .callout {
+    background: rgba(255,107,53,0.07); border-left: 3px solid var(--accent);
+    border-radius: 0 4px 4px 0; padding: 16px 20px; margin-bottom: 20px;
+    color: var(--text); font-size: 17px;
+  }
+
+  /* ── CARDS ── */
+  .card-grid { display: grid; gap: 16px; margin-bottom: 24px; }
+  .card-grid.c2 { grid-template-columns: 1fr 1fr; }
+  .card-grid.c3 { grid-template-columns: 1fr 1fr 1fr; }
+  .card { background: var(--surface2); border: 1px solid rgba(255,107,53,0.18); border-radius: 4px; padding: 20px 22px; }
+  .card.ab { border-left: 3px solid var(--accent4); }
+  .card.ag { border-left: 3px solid var(--accent2); }
+  .card.ap { border-left: 3px solid var(--accent5); }
+  .card.ao { border-left: 3px solid var(--accent3); }
+  .card.ar { border-left: 3px solid var(--accent);  }
+  .card .card-label { font-family: 'VT323', monospace; font-size: 16px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+  .card.ab .card-label { color: var(--accent4); }
+  .card.ag .card-label { color: var(--accent2); }
+  .card.ap .card-label { color: var(--accent5); }
+  .card.ao .card-label { color: var(--accent3); }
+  .card p { font-size: 15px; margin-bottom: 0; }
+  .card ul { margin-bottom: 0; }
+  .card ul li { font-size: 15px; }
+  .card.span2 { grid-column: span 2; }
+
+  /* ── STATS ── */
+  .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 28px; }
+  .stat { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 22px 16px; text-align: center; }
+  .stat .stat-num { font-family: 'VT323', monospace; font-size: 52px; color: var(--accent); line-height: 1; margin-bottom: 8px; letter-spacing: .04em; }
+  .stat .stat-label { font-size: 13px; color: var(--muted); line-height: 1.4; }
+
+  /* ── TABLE ── */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 15px; }
+  th { text-align: left; padding: 10px 14px; color: var(--muted); font-size: 12px; font-weight: 400; letter-spacing: .08em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 14px; border-bottom: 1px solid rgba(48,54,61,.4); vertical-align: top; color: var(--muted); }
+  td strong { color: var(--text); }
+  tr:last-child td { border-bottom: none; }
+  .table-wrap { background: var(--surface2); border: 1px solid rgba(255,107,53,0.18); border-radius: 4px; overflow: hidden; margin-bottom: 20px; }
+
+  /* ── BADGES ── */
+  .badge { display: inline-block; font-family: 'VT323', monospace; font-size: 15px; padding: 2px 10px; border-radius: 2px; letter-spacing: .06em; }
+  .bb { background: rgba(0,172,193,.15);  color: var(--accent4); border: 1px solid rgba(0,172,193,.35); }
+  .bg { background: rgba(124,219,64,.12); color: var(--accent2); border: 1px solid rgba(124,219,64,.3); }
+  .bp { background: rgba(255,166,87,.12); color: var(--accent5); border: 1px solid rgba(255,166,87,.3); }
+  .bo { background: rgba(255,214,0,.12);  color: var(--accent3); border: 1px solid rgba(255,214,0,.3); }
+  .br { background: rgba(255,107,53,.15); color: var(--accent);  border: 1px solid rgba(255,107,53,.35); }
+
+  /* ── GRADE BADGES ── */
+  .g-high    { font-family: 'VT323',monospace; color: var(--accent2); background: rgba(124,219,64,.1); border: 1px solid rgba(124,219,64,.3); padding: 1px 8px; border-radius: 2px; font-size: 14px; }
+  .g-medium  { font-family: 'VT323',monospace; color: var(--accent5); background: rgba(255,166,87,.1); border: 1px solid rgba(255,166,87,.3); padding: 1px 8px; border-radius: 2px; font-size: 14px; }
+  .g-low     { font-family: 'VT323',monospace; color: var(--accent4); background: rgba(0,172,193,.1);  border: 1px solid rgba(0,172,193,.3);  padding: 1px 8px; border-radius: 2px; font-size: 14px; }
+  .g-vlow    { font-family: 'VT323',monospace; color: var(--accent3); background: rgba(255,214,0,.1);  border: 1px solid rgba(255,214,0,.3);  padding: 1px 8px; border-radius: 2px; font-size: 14px; }
+  .g-missing { font-family: 'VT323',monospace; color: var(--accent);  background: rgba(255,107,53,.1); border: 1px solid rgba(255,107,53,.3); padding: 1px 8px; border-radius: 2px; font-size: 14px; }
+  .arrow-grade { color: var(--muted); margin: 0 4px; }
+
+  /* ── MERMAID ── */
+  .mwrap {
+    background: var(--surface2); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px; padding: 18px; overflow-x: auto;
+    display: flex; align-items: flex-start; justify-content: center; margin-bottom: 8px;
+  }
+  .mwrap svg { display: block; background: var(--surface2); }
+  .mwrap svg text, .mwrap svg text tspan,
+  .mwrap svg .nodeLabel, .mwrap svg .nodeLabel *,
+  .mwrap svg .label, .mwrap svg .label *,
+  .mwrap svg .edgeLabel, .mwrap svg .edgeLabel *,
+  .mwrap svg foreignObject div, .mwrap svg foreignObject p, .mwrap svg foreignObject span,
+  .mwrap svg .node foreignObject *, .mwrap svg g.node foreignObject * { color: #fff !important; fill: #fff !important; }
+  .mwrap svg foreignObject > div, .mwrap svg foreignObject > div > * { background: transparent !important; }
+  .mwrap svg .node rect, .mwrap svg .node polygon, .mwrap svg .node circle,
+  .mwrap svg .node ellipse, .mwrap svg .node path, .mwrap svg .label-container,
+  .mwrap svg g.node > rect, .mwrap svg g.node > polygon, .mwrap svg g.node > circle,
+  .mwrap svg g.node > ellipse, .mwrap svg g.node > path { fill: transparent !important; stroke: #fff !important; stroke-width: 3.5px !important; }
+  .mwrap svg .cluster rect { fill: rgba(255,255,255,0.04) !important; stroke: rgba(255,255,255,0.25) !important; stroke-width: 2px !important; }
+  .mwrap svg .edgeLabel rect { fill: var(--surface2) !important; }
+  .mwrap svg .actor { fill: rgba(255,107,53,0.12) !important; stroke: #ff6b35 !important; }
+  .mwrap svg .actor text, .mwrap svg .actor tspan { fill: #ff6b35 !important; color: #ff6b35 !important; }
+  .mwrap svg .actorBkg { fill: rgba(255,107,53,0.12) !important; }
+  .mwrap svg .actorBorder { stroke: #ff6b35 !important; fill: rgba(255,107,53,0.12) !important; }
+  .mwrap svg .actor-line { stroke: rgba(255,255,255,0.6) !important; stroke-width: 3px !important; }
+  .mwrap svg .messageLine0, .mwrap svg .messageLine1 { stroke: rgba(255,255,255,0.7) !important; stroke-width: 3px !important; }
+  .mwrap svg line[class*="message"], .mwrap svg path[class*="message"] { stroke: rgba(255,255,255,0.7) !important; stroke-width: 3px !important; }
+  .mwrap svg .note { fill: rgba(255,214,0,0.12) !important; stroke: rgba(255,214,0,0.4) !important; }
+  .mwrap svg .activation0, .mwrap svg .activation1, .mwrap svg .activation2 { fill: #00101a !important; stroke: #00acc1 !important; }
+  .mwrap svg .loopLine { stroke: #ff6b35 !important; }
+  .mwrap svg .loopText { fill: #ff6b35 !important; }
+  .mwrap svg .flowchart-link, .mwrap svg path.path, .mwrap svg .edge path { stroke: rgba(255,255,255,0.35) !important; stroke-width: 5px !important; }
+  .mwrap svg line.divider { stroke: rgba(255,255,255,0.15) !important; stroke-width: 2px !important; }
+  .mwrap svg marker path { fill: rgba(255,255,255,0.35) !important; stroke: rgba(255,255,255,0.35) !important; }
+  .mwrap svg text, .mwrap svg text tspan { font-size: 20px !important; }
+  .mwrap svg foreignObject div, .mwrap svg foreignObject p, .mwrap svg foreignObject span { font-size: 19px !important; }
+  .dcap { font-size: 13px; color: var(--muted); text-align: center; font-style: italic; margin-bottom: 28px; }
+
+  /* ── TAGS ── */
+  .tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+
+  /* ── TAKEAWAY ── */
+  .takeaway { background: rgba(255,214,0,0.06); border: 1px dashed rgba(255,214,0,0.3); border-radius: 4px; padding: 14px 18px; margin-bottom: 12px; font-size: 16px; color: var(--text); }
+
+  /* ── MISC ── */
+  .hr { height: 1px; background: var(--border); margin: 20px 0; }
+  .sec-hdr { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .sec-hdr .line { flex: 1; height: 1px; background: var(--border); }
+  .footnote { font-size: 13px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 60px; padding-top: 20px; text-align: center; }
+
+  @media (max-width: 700px) {
+    .card-grid.c2, .card-grid.c3, .stat-grid { grid-template-columns: 1fr; }
+    .toc ol { grid-template-columns: 1fr; }
+    .card.span2 { grid-column: span 1; }
+    section h2 { font-size: 38px; }
+    .report-header h1 { font-size: 40px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="report-header">
+  <div class="institution">Agentic AI Program · Carnegie Mellon University · Enrique Corona</div>
+  <h1><span class="gradient-text">Multi-Agent Knowledge</span><br>Base System</h1>
+  <div class="subtitle">Self-Study Capstone Checkpoint Activity 7.1 — Final Capstone Report</div>
+  <div class="meta">
+    <span>Enrique R. Corona Dominguez</span>
+    <span>Agentic AI: Building Autonomous Systems for Real-World Applications</span>
+    <span>June 2026</span>
+  </div>
+  <div class="tag-list" style="justify-content:center;margin-top:20px;">
+    <span class="badge bb">LangGraph</span>
+    <span class="badge bg">ChromaDB · Ollama</span>
+    <span class="badge bp">MCP Protocol</span>
+    <span class="badge bo">ReAct · Tree of Thoughts · Auto-RAG</span>
+    <span class="badge br">Vue 3 + Quasar</span>
+    <span class="badge bb">llama3.1:8b</span>
+    <span class="badge bg">OpenTelemetry</span>
+  </div>
+</header>
+
+<!-- TOC -->
+<div class="toc-wrap">
+  <nav class="toc">
+    <div class="label">Contents</div>
+    <ol>
+      <li><a href="#s1">Project Title</a></li>
+      <li><a href="#s2">Problem and User</a></li>
+      <li><a href="#s3">System Goal and Scope</a></li>
+      <li><a href="#s4">Final System Architecture</a></li>
+      <li><a href="#s5">Design Evolution Across the Program</a></li>
+      <li><a href="#s6">Implementation Overview</a></li>
+      <li><a href="#s7">Evaluation and Results</a></li>
+      <li><a href="#s8">Safety and Reliability Considerations</a></li>
+      <li><a href="#s9">Limitations and Next Steps</a></li>
+      <li><a href="#s10">Public GitHub Repository</a></li>
+    </ol>
+  </nav>
+</div>
+
+<div class="content">
+
+<!-- 1. PROJECT TITLE -->
+<section id="s1">
+  <div class="sec-hdr"><div class="line"></div><span class="badge br">01</span><div class="line"></div></div>
+  <div class="label">Project Title</div>
+  <h2>Research Agent for Org Knowledge</h2>
+  <p class="lead">An Autonomous Multi-Agent Documentation System for Large-Scale Engineering Organizations — a continuously-updated knowledge base that gives engineers, product managers, and leadership an accurate, current map of system architecture, dependencies, and ownership without manual maintenance.</p>
+</section>
+
+<!-- 2. PROBLEM AND USER -->
+<section id="s2">
+  <div class="sec-hdr"><div class="line"></div><span class="badge br">02</span><div class="line"></div></div>
+  <div class="label">Problem and User</div>
+  <h2>Problem Definition</h2>
+
+  <p>I work in a tech-org with systems that are 20+ years old and have evolved organically at different paces and with different technologies. Modernization is a top priority to: 1) improve efficiency, 2) improve quality, and 3) scale better.</p>
+
+  <p>The core problem is that nobody has an accurate, current map of the system. We have 20+ years of technical debt and documentation spread across thousands of developers. Product Managers have documentation based on features and user requirements, while developers have documentation based on high-level designs — and if we are lucky — some low-level design and implementation decisions, which is uncommon. Finding all required dependencies for a new project becomes weeks of manual archaeology.</p>
+
+  <div class="card-grid c2">
+    <div class="card ar">
+      <div class="card-label">Pain Points in a 20+ Year Org</div>
+      <ul>
+        <li><strong>Stale documentation</strong> — written once, never updated; decisions get made on outdated assumptions</li>
+        <li><strong>Knowledge silos</strong> — tribal knowledge spread across Quip, Confluence, wikis, email threads, and people who have since left</li>
+        <li><strong>Late dependency discovery</strong> — integration failures surface at release time, not during design</li>
+        <li><strong>No architecture map</strong> — nobody can confidently answer "what services implement this product?" or "who calls this endpoint?"</li>
+        <li><strong>Cross-org black boxes</strong> — upstream and downstream dependencies poorly documented, making it hard to prioritize integration risk</li>
+      </ul>
+    </div>
+    <div class="card ab">
+      <div class="card-label">Why a Standalone LLM Falls Short</div>
+      <ul>
+        <li><strong>Multiple data sources</strong> — source code, telemetry, Quip, Confluence, wikis; no single LLM context holds all of it</li>
+        <li><strong>Incomplete and inaccurate input</strong> — documents are stale, conflicting, or missing; raw retrieval amplifies the problem</li>
+        <li><strong>No verification layer</strong> — a single model can't distinguish a correct claim from a plausible-sounding stale one without grounding</li>
+        <li><strong>No human escape hatch</strong> — when confidence is low, there's no mechanism to escalate to an expert and close the gap</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout">Modernization efforts in a 20+ year old org stall on one recurring problem: <strong>nobody has an accurate, current map of the system.</strong> A Research Agent that <strong>continuously updates and enriches</strong> documentation collapses that lead time from weeks of manual archaeology to on-demand answers — giving every team a single source of truth they can trust.</div>
+
+  <h3>Intended Users</h3>
+  <ul>
+    <li><strong>Engineering leadership</strong> — needs an accurate, current system map to make modernization decisions without manual archaeology</li>
+    <li><strong>Developers</strong> — need upstream/downstream dependencies, endpoint contracts, and data models when starting new projects</li>
+    <li><strong>Product managers</strong> — need to trace features back to the services that implement them</li>
+    <li><strong>New-hire onboarding</strong> — needs a reliable first map of the system without relying entirely on tribal knowledge</li>
+  </ul>
+</section>
+
+<!-- 3. SYSTEM GOAL AND SCOPE -->
+<section id="s3">
+  <div class="sec-hdr"><div class="line"></div><span class="badge br">03</span><div class="line"></div></div>
+  <div class="label">System Goal and Scope</div>
+  <h2>What the System Is Designed to Do</h2>
+
+  <p>The system acts as a <strong>continuously-updating research agent</strong> that: ingests existing documentation and source code, reconciles gaps between what's documented and what's built, generates structured documentation per project and service, surfaces unresolvable gaps to subject matter experts (SMEs), integrates their answers back into the knowledge base, and answers queries from developers, PMs, and leadership through a Documentation Portal.</p>
+
+  <div class="card-grid c2">
+    <div class="card ag">
+      <div class="card-label">Successful Performance</div>
+      <ul>
+        <li>Every service has an up-to-date SD page with endpoints, downstream dependencies, and data models</li>
+        <li>Every product has a BP page with use cases, capabilities, and links to the services that implement it</li>
+        <li>Queries return grounded, cited answers — not hallucinations</li>
+        <li>SME questions are deduplicated and surfaced asynchronously, not as blockers to users</li>
+        <li>The knowledge base improves with every refresh cycle</li>
+      </ul>
+    </div>
+    <div class="card ao">
+      <div class="card-label">Constraints and Boundaries</div>
+      <ul>
+        <li><strong>Read-only on external systems</strong> — writes only to the BP/SD pages it owns and its own embedding store</li>
+        <li><strong>No PII</strong> — no PII data ingested, no access to undisclosed projects</li>
+        <li><strong>Grounded answers only</strong> — high-similarity retrieval configured; no speculation without evidence</li>
+        <li><strong>POC scope</strong> — Monitoring MCP excluded; input sources limited to GitHub; Slack, Confluence, email deferred</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 4. FINAL SYSTEM ARCHITECTURE -->
+<section id="s4">
+  <div class="sec-hdr"><div class="line"></div><span class="badge br">04</span><div class="line"></div></div>
+  <div class="label">Architecture</div>
+  <h2>Final System Architecture</h2>
+
+  <p>The system is a <strong>multi-agent architecture</strong> organized around a supervisor pattern with four specialized components, each communicating exclusively through <strong>MCP-shaped contracts</strong> — never direct function calls — so each agent can evolve or be replaced independently.</p>
+
+  <h3>High-Level Architecture Diagram</h3>
+
+  <div class="mwrap">
+    <pre class="mermaid">
+%%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
+flowchart LR
+    Portal(["Documentation Portal\nchatbot + SME UI\n+ rendered docs"])
+    Trigger(["Update Trigger\nschedule + GH webhook"])
+    LLM["Local LLM\nllama3.1:8b"]
+    GH(["GitHub\nBP docs + SD docs\n+ source code"])
+    GH_MCP["GitHub MCP"]
+    MON_MCP["Monitoring MCP"]
+    OTEL_MCP["OTel MCP\naudit + monitoring"]
+
+    subgraph OC ["Orchestrator"]
+        OC_Service["Orchestrator Service\nReAct"]
+        OC_DS[("Pending SME questions\n+ SME registry")]
+        OC_Service --- OC_DS
+    end
+
+    subgraph BP ["Business + Product"]
+        BP_MCP["BP MCP"]
+        BP_Service["BP Service\nReAct"]
+        BP_DS[("BP doc index\n+ sources inventory")]
+        BP_MCP --- BP_Service
+        BP_Service --- BP_DS
+    end
+
+    subgraph SD ["System Design"]
+        SD_MCP["SD MCP"]
+        SD_Service["SD Service\nReAct + ToT"]
+        SD_ToT[/"ToT loop\ndep graph"/]
+        SD_DS[("SD doc index\n+ sources inventory")]
+        SD_MCP --- SD_Service
+        SD_Service --- SD_ToT
+        SD_Service --- SD_DS
+    end
+
+    subgraph RAG ["RAG Service"]
+        RAG_MCP["RAG MCP"]
+        RAG_Service["RAG Service\nAuto-RAG + ToT chunking"]
+        RAG_ToT[/"ToT loop\nchunking strategy"/]
+        E_DS[("Shared Embeddings DB\nchunks tagged by domain")]
+        RAG_MCP --- RAG_Service
+        RAG_Service --- RAG_ToT
+        RAG_Service --- E_DS
+    end
+
+    Portal --- OC_Service
+    Portal --- GH
+    Trigger --- OC_Service
+    GH --- Trigger
+    OC_Service --- LLM
+    OC_Service --- BP_MCP
+    OC_Service --- SD_MCP
+    BP_Service --- LLM
+    BP_Service --- SD_MCP
+    BP_Service --- GH_MCP
+    BP_Service --- RAG_MCP
+    SD_Service --- LLM
+    SD_ToT --- LLM
+    SD_Service --- BP_MCP
+    SD_Service --- GH_MCP
+    SD_Service --- RAG_MCP
+    SD_Service --- MON_MCP
+    SD_ToT --- MON_MCP
+    RAG_Service --- LLM
+    RAG_ToT --- LLM
+    GH_MCP --- GH
+    OC_Service --- OTEL_MCP
+    BP_Service --- OTEL_MCP
+    SD_Service --- OTEL_MCP
+    RAG_Service --- OTEL_MCP
+    classDef oc fill:#E3F2FD,stroke:#1565C0,color:#000000
+    classDef bp fill:#E8F5E9,stroke:#2E7D32,color:#000000
+    classDef sd fill:#FFF3E0,stroke:#EF6C00,color:#000000
+    classDef rag fill:#E0F7FA,stroke:#00838F,color:#000000
+    classDef tot fill:#FCE4EC,stroke:#AD1457,color:#000000
+    classDef portal fill:#FFF9C4,stroke:#F57F17,color:#000000
+    classDef trigger fill:#FFEBEE,stroke:#C62828,color:#000000
+    class OC_Service,OC_DS oc
+    class BP_MCP,BP_Service,BP_DS bp
+    class SD_MCP,SD_Service,SD_DS sd
+    class RAG_MCP,RAG_Service,E_DS rag
+    class SD_ToT,RAG_ToT tot
+    class Portal portal
+    class Trigger trigger
+    </pre>
+  </div>
+  <p class="dcap">All agent-to-agent communication goes through typed MCP contracts. Specialists never read from peer embeddings or write to peer pages. Cross-references are relative Markdown links in Git, not runtime calls.</p>
+
+  <h3>The Four Agents</h3>
+
+  <div class="card-grid c2">
+    <div class="card ab">
+      <div class="card-label">Orchestrator (Supervisor)</div>
+      <ul>
+        <li><strong>Owns</strong> — pending SME questions queue, SME/specialist registry. No content state.</li>
+        <li><strong>Does</strong> — routes Portal queries, forwards refresh events, ingests SME replies, deduplicates SME questions by topic</li>
+        <li><strong>Action space</strong> — <code>dispatch_to_bp</code>, <code>dispatch_to_sd</code>, <code>dispatch_to_both</code>, <code>ingest_sme_reply</code>, <code>ack_completion</code>, <code>done</code></li>
+      </ul>
+    </div>
+    <div class="card ag">
+      <div class="card-label">B&amp;P Agent (Business &amp; Product Specialist)</div>
+      <ul>
+        <li><strong>Owns</strong> — BP pages in GitHub, BP doc index (content hash, SD-side revision snapshot, open placeholder IDs), BP sources inventory</li>
+        <li><strong>Does</strong> — detects gaps, fills them via SD cross-references (<code>sd-mcp</code>) or RAG retrieval (<code>rag</code>), escalates unresolvable gaps as inline SME placeholder blocks</li>
+        <li><strong>Does not</strong> — embed or chunk anything itself; all retrieval and indexing delegate to the RAG Service</li>
+      </ul>
+    </div>
+    <div class="card ap">
+      <div class="card-label">SD Agent (System Design Specialist)</div>
+      <ul>
+        <li><strong>Owns</strong> — SD pages in GitHub, SD doc index, SD sources inventory (last-known commit SHAs per service)</li>
+        <li><strong>Does</strong> — analyzes source code via <code>analyze_code</code> (Python AST: endpoints, data structures, data stores, downstream calls), infers dependency graphs via ToT loop, generates service/endpoint/dependency pages</li>
+        <li><strong>Does not</strong> — embed or chunk anything itself, write into BP pages</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-label" style="color:var(--accent4);">RAG Service (Shared Retrieval Infrastructure)</div>
+      <ul>
+        <li><strong>Owns</strong> — shared Embeddings Database, embedding model, Autonomous RAG loop, ToT chunking-strategy sub-graph</li>
+        <li><strong>Does</strong> — accepts docs via <code>RAG_MCP.index()</code>, picks chunking strategy via ToT, computes embeddings, persists chunks tagged with caller's <code>domain</code>; accepts queries via <code>RAG_MCP.retrieve()</code> and runs the Autonomous RAG loop</li>
+        <li><strong>Does not</strong> — read source code, write to GitHub, talk to SMEs, own any per-page state</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Autonomous RAG Loop</h3>
+
+  <div class="mwrap">
+    <pre class="mermaid">
+%%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
+flowchart LR
+    Q(["RAG_MCP.retrieve\nquery, domain_filter, mode"]) --> D{"Decide:\nretrieve?"}
+    D -->|no retrieval| Gen["Generate answer"]
+    D -->|retrieve| R["Retrieve top-K\nShared Embeddings DB\n+ domain_filter"]
+    R --> G{"Grade\nrelevance"}
+    G -->|"≥ threshold"| Gen
+    G -->|"all below,\nrewrites left"| RW["Rewrite query\nmaybe widen filter"]
+    G -->|"all below,\nbudget exhausted"| FB["Build response\nlow_confidence or exhausted"]
+    RW --> R
+    Gen --> CF{"Re-grade:\nfaithful?\nanswers query?"}
+    CF -->|both pass| OK["status = ok"]
+    CF -->|"fail, retry left"| RW
+    CF -->|"fail, budget exhausted"| FB
+    OK --> Out(["Return to caller"])
+    FB --> Out
+    classDef node fill:#E8F5E9,stroke:#2E7D32,color:#000000
+    classDef decision fill:#FFF3E0,stroke:#EF6C00,color:#000000
+    classDef boundary fill:#FFF9C4,stroke:#F57F17,color:#000000
+    class R,RW,Gen,OK,FB node
+    class D,G,CF decision
+    class Q,Out boundary
+    </pre>
+  </div>
+  <p class="dcap">Four-node LangGraph StateGraph: decide → retrieve → grade → rewrite. Bounded to R=2 rewrites. Returns <code>ok | low_confidence | exhausted</code>. Repeated grade failures emit an index-quality flag so the calling specialist can re-index the source on the next refresh.</p>
+
+  <h3>SD Service — Per-Page Enrichment Flow</h3>
+
+  <div class="mwrap">
+    <pre class="mermaid">
+%%{init: {'flowchart': {'defaultRenderer': 'elk', 'curve': 'step'}}}%%
+flowchart LR
+    Start(["_refresh_one_page"]) --> Read["read existing page"]
+    Read --> Resolve["resolve owning service\n(DB-naming convention)"]
+    Resolve --> Pull["analyze_code\nproduces analysis_summary"]
+    Pull --> Skip{"page_hash and\nside_info_revision\nboth unchanged?"}
+    Skip -->|"yes, not force"| ExitU(["span = unchanged"])
+    Skip -->|"no, or force"| Hint["classify_by_path\npicks page_kind hint"]
+    Hint --> Detect["detect_gaps LLM\nclassify + propose sections\nstrategy = source or rag per gap"]
+    Detect --> Loop["for each gap"]
+    Loop --> Strat{"strategy?"}
+    Strat -->|source| Compose["prose-LLM\non analysis JSON"]
+    Strat -->|rag| Retrieve["RAG_MCP.retrieve\ndomain_filter=sd"]
+    Retrieve --> Quality{"ok?"}
+    Quality -->|ok| Filled
+    Quality -->|"low_conf or exhausted"| SME["SME-PLACEHOLDER block\nquestion_id fenced"]
+    Compose --> Filled["FilledGap"]
+    SME --> Filled
+    Filled --> Loop
+    Loop --> Merge["merge_into_existing\nSAFETY: never overwrite\nsubstantive prose"]
+    Merge --> Index["RAG_MCP.index domain=sd"]
+    Index --> Persist["upsert doc_index\nside_info_revision\nanswered_sme_blocks"]
+    Persist --> ExitE(["span = enriched or escalated_only"])
+    classDef node fill:#E8F5E9,stroke:#2E7D32,color:#000000
+    classDef llm fill:#E3F2FD,stroke:#1565C0,color:#000000
+    classDef decision fill:#FFF3E0,stroke:#EF6C00,color:#000000
+    classDef boundary fill:#FFF9C4,stroke:#F57F17,color:#000000
+    classDef sme fill:#FCE4EC,stroke:#AD1457,color:#000000
+    class Read,Resolve,Pull,Hint,Loop,Retrieve,Merge,Index,Persist,Filled node
+    class Detect,Compose llm
+    class Skip,Strat,Quality decision
+    class Start,ExitU,ExitE boundary
+    class SME sme
+    </pre>
+  </div>
+  <p class="dcap">Gap criteria: missing heading · empty body · boilerplate marker (TBD/TODO/WIP/N/A) · SME-PLACEHOLDER fence. Subjective judgments are NOT gap criteria. <code>merge_into_existing</code> never overwrites substantive prose even if the detector mis-flags it.</p>
+
+  <h3>SME Interaction and Re-Integration</h3>
+
+  <div class="mwrap">
+    <pre class="mermaid">
+sequenceDiagram
+    participant Trig as Update Trigger
+    participant OC as Orchestrator
+    participant Spec as BP / SD Service
+    participant Docs as BP / SD Pages (GitHub)
+    participant E as Shared Embeddings DB
+    participant Portal as Documentation Portal
+    actor SME
+
+    Trig ->> OC: Refresh event
+    OC ->> Spec: Dispatch refresh task
+    Note over OC,Docs: Background build hits unresolvable gap:<br/>Auto-RAG exhausted · dep-graph tie<br/>dynamic route · cross-ref unresolved
+    Spec ->> Docs: Commit page with SME-PLACEHOLDER block(s)
+    Spec -->> OC: Escalation envelope (question_id, originating_page, best_guess, trail)
+    OC ->> OC: Queue · dedup by topic · resolve SME from registry
+    OC -->> Portal: Surface pending question + context + best guess
+    SME ->> Portal: Reply with answer
+    Portal ->> OC: POST /v1/sme-replies
+    OC ->> Docs: Persist as new BP document
+    OC ->> Spec: Patch each originating page (placeholder → SME text + link)
+    OC ->> Spec: Re-index new doc + patched pages
+    Spec ->> E: Refresh embeddings (domain-tagged)
+    OC ->> OC: Remove from pending_sme_questions
+    Note over Trig,SME: Future queries on same topic now hit enriched,<br/>grounded retrieval — page no longer shows a gap
+    </pre>
+  </div>
+  <p class="dcap">SME escalation is background-only — user queries never page an SME. Two-write re-integration: new BP doc (future RAG retrieval finds the answer) + patch every originating page. Closed question_ids are never reused — the Git audit trail stays linear.</p>
+
+  <h3>Key Design Patterns</h3>
+  <div class="card-grid c3">
+    <div class="card ab">
+      <div class="card-label">ReAct Loops</div>
+      <p>All four agents run as LangGraph <code>StateGraph</code> instances with <code>reason → act → observe</code> cycles. The Orchestrator's loop is compact; B&amp;P and SD run deterministic background-mode paths and reactive query-mode paths on the same graph.</p>
+    </div>
+    <div class="card ao">
+      <div class="card-label">Tree of Thoughts (Selective)</div>
+      <p>Applied only where it helps — not globally. Chunking strategy selection (RAG Service, K=4, similarity-over-M ≥0.7, beam search B=2–3, D=2–3) and dependency graph inference (SD, K=3 candidates, telemetry-agreement ≥0.8).</p>
+    </div>
+    <div class="card ag">
+      <div class="card-label">Continuous Refresh</div>
+      <p>Update Trigger fans out refresh events to affected specialists in parallel. Refresh time ∝ slowest page, not total page count. Per-page skip-unchanged logic means re-runs over unchanged content are free.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 5. DESIGN EVOLUTION -->
+<section id="s5">
+  <div class="sec-hdr"><div class="line"></div><span class="badge br">05</span><div class="line"></div></div>
+  <div class="label">Design Evolution</div>
+  <h2>Design Evolution Across the Program</h2>
+
+  <p>The system design evolved substantially from the initial concept in Module 1 through the final design in Module 6. Each module added a concrete layer.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Module</th><th>Key Addition</th><th>Why It Mattered</th></tr>
+      <tr>
+        <td><strong>1 — Problem framing</strong></td>
+        <td>Problem statement, two specialist POVs (B&amp;P and SA), core principles (read-only, extensible, secure, up-to-date)</td>
+        <td>The constraints that held through every subsequent refinement. SME feedback was established as a first-class feature from the start.</td>
+      </tr>
+      <tr>
+        <td><strong>2 — Reasoning loops</strong></td>
+        <td>Formal ReAct loops for both specialists and an Orchestration layer on top</td>
+        <td>Defined the retrieve → analyze → reconcile → generate → escalate pattern per specialist. The Orchestrator's job is routing — not content analysis.</td>
+      </tr>
+      <tr>
+        <td><strong>3 — RAG</strong></td>
+        <td>Indexing methodology, chunking strategies, summary embeddings, quality heuristic</td>
+        <td>Critical insight: distinguishing two RAG modes — classic Q&amp;A and document <em>selection</em> during background knowledge-building. This asymmetry shaped the RAG Service's API in Module 5.</td>
+      </tr>
+      <tr>
+        <td><strong>4 — Tree of Thoughts</strong></td>
+        <td>Selective ToT for chunking strategy and dep-graph inference; beam search; per-use-case scoring rubrics; LangGraph replacing LangChain (deprecation path)</td>
+        <td>ToT is used only where it helps — not globally. LangGraph was chosen because stateful cyclic graphs with conditional early-exit edges don't fit LCEL chains.</td>
+      </tr>
+      <tr>
+        <td><strong>5 — High-level architecture</strong></td>
+        <td>RAG consolidated into a fourth standalone agent; MCP contracts between all components; Documentation Portal design; B&amp;P↔SD cross-reference mechanism</td>
+        <td>The biggest structural change. Co-locating the embedding model, vector store, Auto-RAG loop, and ToT chunking in one service gives both specialists consistent retrieval behavior and a free upgrade path for future specialists.</td>
+      </tr>
+      <tr>
+        <td><strong>6 — Safety, evaluation, human oversight</strong></td>
+        <td>Full guardrails catalogue, two-layer evaluation strategy (online OTel metrics + offline golden set), SME placeholder format and re-integration flow, per-service LLD, Portal surfaces</td>
+        <td>Framed safety as three reinforcing layers: preventive guardrails, detective evaluation, and corrective human oversight. The per-service LLDs made the enrichment flows, gap criteria, and fill strategies concrete enough to implement directly.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>One notable removal: the code/design gap-reconciliation ToT use case was dropped from the POC after Module 5. It adds meaningful complexity with lower ROI than the RAG and dep-graph ToT uses for a first working version.</p>
+</section>
+
+<!-- 6. IMPLEMENTATION OVERVIEW -->
+<section id="s6">
+  <div class="sec-hdr"><div class="line"></div><span class="badge br">06</span><div class="line"></div></div>
+  <div class="label">Implementation</div>
+  <h2>Implementation Overview</h2>
+
+  <p>The POC is a working implementation of the full architecture, tested against <strong>Pear Store</strong> — a synthetic Apple App Store–style e-commerce system built deliberately with uneven implementation and documentation gaps, giving the agent realistic material to discover and remediate.</p>
+
+  <h3>Pear Store — Synthetic Test Corpus</h3>
+
+  <div class="card-grid c2">
+    <div class="card ar">
+      <div class="card-label">System Overview</div>
+      <ul>
+        <li><strong>10 microservices</strong> — 8 storefront (catalog, account, cart, order, payment, fulfillment, review, search) + 2 PearCare (pearcare-plan, pearcare-claim)</li>
+        <li><strong>1 frontend</strong> — Flask + Jinja storefront</li>
+        <li><strong>9 SQLite databases</strong> — one per service, seeded on boot</li>
+        <li><strong>Selective OTel instrumentation</strong> — 5 of 10 services emit spans/metrics; rest are dark</li>
+      </ul>
+    </div>
+    <div class="card ao">
+      <div class="card-label">Documentation Quality Tiers (Intentional Gaps)</div>
+      <ul>
+        <li><span class="g-high">HIGH</span> &nbsp; Complete, exemplary — e.g. <code>catalog-db.md</code>, order telemetry</li>
+        <li><span class="g-medium">MEDIUM</span> &nbsp; Mostly complete, named gaps — e.g. fulfillment telemetry</li>
+        <li><span class="g-low">LOW</span> &nbsp; Terse, missing fields — e.g. <code>account.md</code>, <code>payment-db.md</code></li>
+        <li><span class="g-vlow">VERY LOW</span> &nbsp; Fragments, typos, wrong claims — e.g. <code>review.md</code></li>
+        <li><span class="g-missing">MISSING</span> &nbsp; Entirely absent — e.g. <code>order-db</code>, <code>fulfillment-db</code>, 4 telemetry docs</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Frameworks and Libraries</h3>
+
+  <div class="tag-list">
+    <span class="badge bb">LangGraph</span>
+    <span class="badge bg">ChromaDB</span>
+    <span class="badge bb">Ollama + llama3.1:8b</span>
+    <span class="badge br">FastAPI</span>
+    <span class="badge bg">Vue.js + Quasar</span>
+    <span class="badge bp">SQLite</span>
+    <span class="badge bo">OpenTelemetry</span>
+    <span class="badge bb">Python ast module</span>
+    <span class="badge bg">CrewAI</span>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Framework / Tool</th><th>Role in the System</th></tr>
+      <tr>
+        <td><strong>LangGraph</strong></td>
+        <td>Drives all four agent reasoning loops as typed <code>StateGraph</code> instances. Chosen over LangChain (in deprecation path) because it supports stateful, cyclic graphs with conditional edges — required for the Auto-RAG rewrite loop and the beam-search ToT loops.</td>
+      </tr>
+      <tr>
+        <td><strong>ChromaDB</strong></td>
+        <td>Local vector store for the shared Embeddings Database. Runs in-process for the POC; splitting behind <code>RAG_MCP</code>-over-HTTP is a later optimization without changing the specialist-facing contract.</td>
+      </tr>
+      <tr>
+        <td><strong>Ollama + llama3.1:8b</strong></td>
+        <td>All LLM calls across the system run against a single local instance. One model, one set of prompts, no token cost. Latency is the primary cost proxy monitored via the OTel trace stream.</td>
+      </tr>
+      <tr>
+        <td><strong>FastAPI</strong></td>
+        <td>Orchestrator REST API — <code>/v1/queries</code>, <code>/v1/refresh</code>, <code>/v1/sme-replies</code>, <code>/v1/streams/events</code> (SSE X-Ray feed), <code>/v1/metrics</code>, <code>/v1/docs/*</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>Vue.js + Quasar</strong></td>
+        <td>Documentation Portal — single-page app with Documentation, SME Answers, and Dashboard tabs, a Multi-Agents X-Ray collapsible drawer (SSE stream of service logs + LLM audit records), and a floating chatbot bubble.</td>
+      </tr>
+      <tr>
+        <td><strong>SQLite + OpenTelemetry</strong></td>
+        <td>In-service audit log backed by SQLite for the POC. OTel spans emitted via <code>OTEL_MCP</code> for every inbound/outbound MCP call. Production swaps both for Splunk and a real OTel backend without changing the per-call API.</td>
+      </tr>
+    </table>
+  </div>
+</section>
+
+<!-- 7. EVALUATION AND RESULTS -->
+<section id="s7">
+  <div class="sec-hdr"><div class="line"></div><span class="badge br">07</span><div class="line"></div></div>
+  <div class="label g">Results</div>
+  <h2>Evaluation and Results</h2>
+
+  <p>The POC was run against the full Pear Store corpus — 10 services, 9 databases, and a mix of BP and SD documentation across all quality tiers. The evaluation strategy has two layers: <strong>online metrics</strong> computed live from the OTel trace stream and doc indexes, and <strong>offline metrics</strong> requiring labeling or human sampling.</p>
+
+  <h3>Key Results</h3>
+
+  <div class="stat-grid">
+    <div class="stat">
+      <div class="stat-num">88.4%</div>
+      <div class="stat-label">Auto-RAG re-grade pass rate<br>(faithfulness + answerability)</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">82.5%</div>
+      <div class="stat-label">ToT chunking strategy<br>success rate</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">100%</div>
+      <div class="stat-label">Cross-reference health<br>22 SD↔BP links, 0 broken</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">44</div>
+      <div class="stat-label">Pages enriched + 3 stub pages<br>created from discovered gaps</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">1,500</div>
+      <div class="stat-label">LLM calls, 0 errors<br>llama3.1:8b local model</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">18.8%</div>
+      <div class="stat-label">Index-quality hit rate<br>driving targeted re-enrichment</div>
+    </div>
+  </div>
+
+  <p>11 SME questions were generated (4 answered, 7 pending). Answered questions were merged back into their originating pages and re-indexed — confirming the full SME re-integration loop works end-to-end.</p>
+
+  <h3>SD Gap → Impact</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Gap Area</th><th>What Changed</th></tr>
+      <tr>
+        <td><strong>Services</strong><br>(account, review, payment)</td>
+        <td><code>account.md</code> rewritten — auth flow, session lifecycle &amp; correct endpoints added. <code>review.md</code> corrected — wrong endpoint names fixed. <code>payment.md</code> — PSP provider field and retry policy filled.<br>Page grade: <span class="g-low">LOW</span> <span class="arrow-grade">→</span> <span class="g-high">HIGH</span></td>
+      </tr>
+      <tr>
+        <td><strong>Databases</strong><br>(order-db, fulfillment-db, pearcare-plan-db)</td>
+        <td>3 pages created from scratch — schemas, index definitions, and FK relationships inferred from source code via <code>analyze_code</code>. DB queries previously returned 0 RAG results.<br>Page grade: <span class="g-missing">MISSING</span> <span class="arrow-grade">→</span> <span class="g-medium">MEDIUM</span></td>
+      </tr>
+      <tr>
+        <td><strong>Telemetry</strong><br>(catalog, search, account, fulfillment)</td>
+        <td><code>catalog.md</code> expanded from a 3-line stub to a full span list. <code>search.md</code> created from scratch. 4 pages indexed where 0 existed before.</td>
+      </tr>
+      <tr>
+        <td><strong>Runbooks</strong><br>(incident-response)</td>
+        <td>On-call rotation, escalation tree, and rollback steps added to an empty doc. 4 SME questions answered and merged back via the re-integration flow.</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>BP Gap → Impact</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Business Case</th><th>What Changed</th></tr>
+      <tr>
+        <td><strong>catalog-discovery, purchase-flow</strong> <span class="g-high">HIGH</span></td>
+        <td>Levers, success metrics, and edge-case policies propagated from this anchor to 9 lower-quality BP pages via SD cross-references.</td>
+      </tr>
+      <tr>
+        <td><strong>refunds, pearcare-cancellations</strong> <span class="g-low">LOW</span></td>
+        <td>Refund ceiling, SLA windows (72h), and churn baseline added from SD payment/fulfillment docs.<br>Page grade: <span class="g-low">LOW</span> <span class="arrow-grade">→</span> <span class="g-medium">MEDIUM</span></td>
+      </tr>
+      <tr>
+        <td><strong>ratings-trust, piracy-and-licensing</strong> <span class="g-vlow">VERY LOW</span></td>
+        <td>Abuse scoring criteria, enforcement thresholds, and revenue exposure estimates filled from SD telemetry data.<br>Page grade: <span class="g-vlow">VERY LOW</span> <span class="arrow-grade">→</span> <span class="g-low">LOW</span></td>
+      </tr>
+      <tr>
+        <td><strong>developer-payouts, pearcare-claim-economics</strong> <span class="g-medium">MEDIUM</span></td>
+        <td>Monthly payout cycle, 5-day claim approval SLA, and dispute window documented. 100% cross-reference health.<br>Page grade: <span class="g-medium">MEDIUM</span> <span class="arrow-grade">→</span> <span class="g-high">HIGH</span></td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Online Metrics (Live from Day One)</h3>
+  <ul>
+    <li><strong>Answer re-grade pass rate</strong> — per axis: faithfulness (hallucination check) and answerability (faithful refusal check). Both gate <code>status=ok</code>.</li>
+    <li><strong>RAG status distribution</strong> — breakdown of <code>ok / low_confidence / exhausted</code>. A rise in <code>exhausted</code> signals a coverage or indexing problem.</li>
+    <li><strong>Escalation rate</strong> — fraction of background builds surfacing at least one SME placeholder. Tracks knowledge-base coverage over time.</li>
+    <li><strong>Coverage</strong> — <code>% products with a BP page</code> and <code>% services with an SD page</code>. A drop signals the trigger or diff missed something.</li>
+    <li><strong>Page freshness</strong> — median page age since last refresh; <code>% pages whose content hash diverges from current source</code>.</li>
+    <li><strong>Cross-reference health</strong> — <code>% relative Markdown links that resolve</code> on a scheduled validator pass.</li>
+    <li><strong>SME resolution time</strong> — median / p95 from question creation to <code>ingest_sme_reply</code>.</li>
+  </ul>
+
+  <h3>Offline Metrics (Periodic)</h3>
+  <ul>
+    <li><strong>Correctness via golden set</strong> — ~30–50 curated Q&amp;A pairs across BP and SD, scored by LLM-as-judge (relevance, completeness, accuracy, citation quality) with periodic human recalibration.</li>
+    <li><strong>Calibration</strong> — of answers stamped <code>ok</code>, what fraction a human reviewer also marks correct. A miscalibrated <code>ok</code> is the worst failure mode — overconfident hallucination.</li>
+    <li><strong>Hallucination rate</strong> — "is every factual claim supported by at least one cited source?" Run periodically with a stricter rubric.</li>
+  </ul>
+</section>
+
+<!-- 8. SAFETY AND RELIABILITY -->
+<section id="s8">
+  <div class="sec-hdr"><div class="line"></div><span class="badge br">08</span><div class="line"></div></div>
+  <div class="label">Safety and Reliability</div>
+  <h2>Safety and Reliability Considerations</h2>
+
+  <p>The safety posture is built from three layers that reinforce each other: <strong>preventive guardrails</strong> keep individual loops bounded and isolated so a single bad call can't cascade. <strong>Detective evaluation</strong> turns runtime behavior into measurable signals so regressions surface early. <strong>Corrective human oversight</strong> closes the loop when the agent genuinely can't resolve something — without blocking users or stalling the documentation pipeline.</p>
+
+  <div class="card-grid c2">
+    <div class="card ab">
+      <div class="card-label">Preventive Guardrails (Built in)</div>
+      <ul>
+        <li><strong>Tool access boundaries</strong> — MCPs are the only inter-agent interface. Adding a new tool means changing the wiring, not the prompts.</li>
+        <li><strong>Cross-domain isolation</strong> — every chunk carries a <code>domain</code> tag. B&amp;P cannot write <code>domain=sd</code>; SD cannot write <code>domain=bp</code>.</li>
+        <li><strong>Loop bounds</strong> — Auto-RAG capped at R=2 rewrites; ToT capped at B=2–3, D=2–3. After the cap: <code>low_confidence</code> or <code>exhausted</code>, never infinite recursion.</li>
+        <li><strong>Output validation</strong> — every answer goes through a grader and faithfulness re-grade. Failed grades trigger a rewrite or fall back to low-confidence with closest matches.</li>
+        <li><strong>Read-only on external systems</strong> — writes only to the BP/SD pages it owns and its own embedding store.</li>
+        <li><strong>SME escalation is background-only</strong> — user queries never page an SME. Escalations are deduped by topic.</li>
+        <li><strong>Dual audit trail</strong> — OTel spans for every MCP call + Git history for every page write.</li>
+      </ul>
+    </div>
+    <div class="card ar">
+      <div class="card-label">Known Gaps (Deferred)</div>
+      <ul>
+        <li><strong>Prompt injection</strong> — input docs from Git could embed adversarial instructions. No sanitization pass yet; POC input set is hand-checked.</li>
+        <li><strong>PII / sensitive content</strong> — policy-only today; a redaction pass on ingest is a candidate for the next phase.</li>
+        <li><strong>Global LLM budget cap</strong> — per-loop bounds exist, but no per-request or per-refresh ceiling on total LLM calls.</li>
+        <li><strong>Output schema validation</strong> — structured outputs follow documented shapes but aren't JSON-schema-validated at the boundary.</li>
+        <li><strong>SME identity</strong> — how an SME authenticates when replying is left to the Portal implementation.</li>
+      </ul>
+    </div>
+  </div>
+
+  <p>The three layers reinforce each other: guardrails make detection meaningful, detection routes the right gaps to SMEs, and SME answers feed back into the index so the next round of preventive guardrails has better material to work with.</p>
+</section>
+
+<!-- 9. LIMITATIONS AND NEXT STEPS -->
+<section id="s9">
+  <div class="sec-hdr"><div class="line"></div><span class="badge br">09</span><div class="line"></div></div>
+  <div class="label">Limitations and Next Steps</div>
+  <h2>Limitations and Next Steps</h2>
+
+  <h3>Current Limitations</h3>
+
+  <div class="card-grid c3">
+    <div class="card ar">
+      <div class="card-label">Model &amp; Quality</div>
+      <ul>
+        <li>All nodes share <code>llama3.1:8b</code> — no per-node specialization yet</li>
+        <li>No adversarial testing — prompt injection and PII leakage rates unmeasured</li>
+        <li>No regression suite — quality over time not tracked systematically</li>
+      </ul>
+    </div>
+    <div class="card ap">
+      <div class="card-label">Infrastructure</div>
+      <ul>
+        <li>Single-host — no horizontal scaling</li>
+        <li>SQLite everywhere — not production-grade at volume</li>
+        <li>In-process ChromaDB — no dedicated vector store</li>
+        <li>Stub OTel collector — SQLite-backed, not a real backend</li>
+      </ul>
+    </div>
+    <div class="card ao">
+      <div class="card-label">Triggers &amp; Sources</div>
+      <ul>
+        <li>Schedule-based or manual only — no GH webhook default</li>
+        <li>Git only — Slack, Confluence, email out of scope</li>
+        <li>Python only — SD source analysis doesn't support other languages</li>
+        <li>Source code not indexed in RAG</li>
+      </ul>
+    </div>
+    <div class="card ag">
+      <div class="card-label">Corpus &amp; Telemetry</div>
+      <ul>
+        <li>Synthetic test data — real legacy codebases will surface edge cases</li>
+        <li>Partial OTel coverage — only 5 of 10 services emit spans</li>
+        <li>Monitoring MCP absent — ToT dep-graph falls back to code-only analysis</li>
+      </ul>
+    </div>
+    <div class="card ab">
+      <div class="card-label">Security &amp; Access</div>
+      <ul>
+        <li>No auth — anyone reaching the Portal can trigger refreshes</li>
+        <li>Single shared repo — no per-domain access control</li>
+        <li>Stub SME registry — no skill-based routing or workload balancing</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-label" style="color:var(--accent2);">Evaluation</div>
+      <ul>
+        <li>No golden-set benchmark yet — calibration checks are manual spot-checks</li>
+        <li>RAG retrieval tuning is still manual — moving from TOP_K=4 to TOP_K=25 was one of the highest-leverage improvements and only visible because the metrics were there</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Realistic Next Steps</h3>
+  <ol>
+    <li><strong>Wire the Monitoring MCP</strong> — unlocks telemetry-agreement scoring for SD's dep-graph ToT, the strongest signal for catching stale or wrong dependency graphs.</li>
+    <li><strong>Add additional input sources</strong> — Quip and Confluence enter through the same ingest contract used by GitHub today; no topology changes required.</li>
+    <li><strong>Build the eval harness</strong> — automate the golden-set evaluation on a weekly cadence. This is what's still most missing — quality regressions from prompt, model, or retrieval parameter changes are currently invisible.</li>
+    <li><strong>Upgrade LLM for accuracy-critical nodes</strong> — swapping the Auto-RAG grader and faithfulness re-grade to <code>llama3.1:70b</code> or <code>mixtral:8x7b</code> for those nodes specifically would improve discrimination without changing the architecture.</li>
+    <li><strong>Implement PII redaction and prompt-injection sanitization</strong> — pre-ingest pass before documents enter the indexing pipeline.</li>
+    <li><strong>Add auth</strong> — SSO middleware on the Portal and authenticated GitHub proxying on the Orchestrator. Designed as a middleware change, not a contract change.</li>
+    <li><strong>Real org deployment</strong> — run against actual org documentation and source code to validate at scale.</li>
+  </ol>
+
+  <h3>Key Learnings</h3>
+
+  <div class="takeaway"><strong>Good system design + small local LLMs</strong> can deliver production-quality results — llama3.1:8b achieved 88.4% re-grade pass rate and 82.5% ToT success with 0 errors across 1,500 calls.</div>
+  <div class="takeaway">Using LLMs as <strong>processing primitives</strong> — judges, classifiers, Q&amp;A generators — unlocks structured knowledge from raw unstructured docs at scale. The LLM doesn't need to know everything; it needs to grade, classify, and generate questions reliably.</div>
+  <div class="takeaway"><strong>LLM latency is a first-class design constraint</strong> in multi-agent systems. Loop bounds and beam width aren't just safety rails — they're performance decisions. Every reliability mechanism is also a latency cost.</div>
+  <div class="takeaway"><strong>Observability was the key feedback loop</strong> — index-quality hit rate, grader-fail rate, and escalation counts surfaced gaps no static analysis would have caught. Moving from TOP_K=4 to TOP_K=25 was only visible because the metrics were there.</div>
+  <div class="takeaway"><strong>Software engineering best practices</strong> — typed contracts, OTel tracing, domain isolation — are directly transferable to agentic systems and make them debuggable. Embedding databases, agent-oriented observability, and typed inter-agent contracts are load-bearing, not optional.</div>
+  <div class="takeaway"><strong>AI-assisted coding made this scale possible</strong> — a project of this scope wouldn't be achievable in the available timeframe without it; used with intent and understanding, it remains a genuinely didactic experience.</div>
+</section>
+
+<!-- 10. GITHUB REPOSITORY -->
+<section id="s10">
+  <div class="sec-hdr"><div class="line"></div><span class="badge br">10</span><div class="line"></div></div>
+  <div class="label">Public GitHub Repository</div>
+  <h2>Public GitHub Repository</h2>
+
+  <div class="card-grid c2">
+    <div class="card ar">
+      <div class="card-label">Project Repository</div>
+      <p><a href="https://github.com/kikecorona/agentic-ai-capstone-project">https://github.com/kikecorona/agentic-ai-capstone-project</a></p>
+    </div>
+    <div class="card ag">
+      <div class="card-label">Pear Store (Synthetic Corpus)</div>
+      <p><a href="https://github.com/kikecorona/pear-store">https://github.com/kikecorona/pear-store</a></p>
+    </div>
+  </div>
+
+  <p>The repository includes:</p>
+  <ol>
+    <li><strong>Project documentation</strong> — <code>PROJECT.md</code> (problem, reasoning loops, RAG design, ToT), <code>PROJECT_ARCHITECTURE.md</code> (high-level architecture, guardrails, trade-offs), <code>PROJECT_LOW_LEVEL_DESIGN.md</code> (per-service designs, SME interaction, evaluation strategy, portal design)</li>
+    <li><strong>Implementation</strong> — full working POC under <code>implementation/</code> including the Orchestrator (FastAPI), B&amp;P Service, SD Service, RAG Service (LangGraph + ChromaDB), and Documentation Portal (Vue.js + Quasar)</li>
+    <li><strong>Synthetic data</strong> — Pear Store with 10 services, endpoints, and product documentation at varying quality tiers used to exercise the full pipeline</li>
+    <li><strong>Playground</strong> — <code>playground/</code> contains standalone experiments with LangGraph, ReAct, and GitHub MCP that informed the final design</li>
+    <li><strong>Setup and usage instructions</strong> — <code>implementation/README.md</code> covers prerequisites, environment setup, and how to boot the full stack locally</li>
+  </ol>
+</section>
+
+<div class="footnote">
+  Agentic AI Program: Building Autonomous Systems for Real-World Applications · Carnegie Mellon University, School of Computer Science, Executive Education · Enrique R. Corona Dominguez · June 2026
+</div>
+
+</div><!-- /.content -->
+
+<script>
+function fixDiagramColors() {
+  document.querySelectorAll('.mwrap svg').forEach(function(svg) {
+    svg.querySelectorAll('rect, polygon, circle, ellipse, path').forEach(function(el) {
+      if (el.closest('marker')) return;
+      if (el.closest('.cluster')) return;
+      var cls = (el.className && el.className.baseVal) || '';
+      if (cls.includes('flowchart-link') || cls.includes('transition')) return;
+      if (cls.includes('note')) return;
+      if (el.closest('.actor') || el.closest('.actor-man')) {
+        el.style.setProperty('fill', 'rgba(255,107,53,0.15)', 'important');
+        el.style.setProperty('stroke', '#ff6b35', 'important');
+        el.style.setProperty('stroke-width', '3px', 'important');
+        return;
+      }
+      el.style.setProperty('fill', 'transparent', 'important');
+      if (!cls.includes('flowchart-link') && !cls.includes('path')) {
+        el.style.setProperty('stroke', 'rgba(255,255,255,0.8)', 'important');
+        el.style.setProperty('stroke-width', '3px', 'important');
+      }
+    });
+    svg.querySelectorAll('text, tspan').forEach(function(el) {
+      el.style.setProperty('fill', '#fff', 'important');
+    });
+    svg.querySelectorAll('foreignObject *').forEach(function(el) {
+      el.style.setProperty('color', '#fff', 'important');
+      el.style.setProperty('background-color', 'transparent', 'important');
+    });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  mermaid.registerLayoutLoaders(window.__elkLayouts);
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'neutral',
+    flowchart: { useMaxWidth: true, htmlLabels: true, defaultRenderer: 'elk', curve: 'step' },
+    sequence: { useMaxWidth: true, wrap: true }
+  });
+  var observer = new MutationObserver(function() {
+    if (document.querySelectorAll('.mwrap svg').length > 0) {
+      setTimeout(fixDiagramColors, 200);
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  setTimeout(fixDiagramColors, 2000);
+});
+</script>
+</body>
+</html>

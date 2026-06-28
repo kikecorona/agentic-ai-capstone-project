@@ -288,6 +288,9 @@ const props = defineProps({
   // selected file. Used by the SME Answers pane where we just want
   // to show the originating page next to the reply form.
   hideTree: { type: Boolean, default: false },
+  // Optional: pin this viewer to a specific branch, ignoring the global
+  // settings branch. Used by the SME pane to always read from main.
+  forceBranch: { type: String, default: "" },
 });
 
 const gh = inject("gh");
@@ -322,7 +325,7 @@ const compareActive = computed(
     settings.compareBranch !== branch.value,
 );
 
-const branch = computed(() => settings.branch);
+const branch = computed(() => props.forceBranch || settings.branch);
 
 // ─── Per-viewer navigation history ─────────────────────────────────
 // A linear stack of view states (``{ currentPath, selectedPath }``)
@@ -600,6 +603,15 @@ function onMarkdownClick(event) {
   // Skip empty fragments, hash-only in-page links, mailto:, and any
   // absolute URL — those should behave like normal browser links.
   if (!href || href.startsWith("#") || href.startsWith("mailto:")) return;
+  // Rewrite localhost absolute URLs (e.g. http://127.0.0.1:9000/sd/services/payment.md)
+  // into internal doc paths so cross-domain links navigate within the portal.
+  const localhostMatch = href.match(/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/.*)/i);
+  if (localhostMatch) {
+    const internalPath = ("documentation" + localhostMatch[3]).replace(/^\/+/, "").replace(/\/+/g, "/");
+    event.preventDefault();
+    router.push({ name: "docs", query: { file: internalPath } });
+    return;
+  }
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(href)) return;
 
   // Strip optional anchor fragment so the resolution math doesn't

@@ -61,10 +61,10 @@
   .nav .counter { color: var(--accent); font-family: 'VT323', monospace; font-size: 18px; min-width: 64px; text-align: center; }
 
   /* ── SLIDE ── */
-  .deck { width: 1500px; max-width: 99vw; }
+  .deck { width: 2250px; max-width: 99vw; }
   .slide {
     display: none;
-    width: 1500px;
+    width: 2250px;
     min-height: 1100px;
     max-height: 1100px;
     background: var(--surface);
@@ -172,9 +172,15 @@
   /* Edge label background */
   .mwrap svg .edgeLabel rect { fill: var(--surface2) !important; }
   /* Sequence diagram — dark palette */
-  .mwrap svg .actor { fill: #0e1a0e !important; stroke: #7cdb40 !important; }
-  .mwrap svg .actor-line { stroke: rgba(255,255,255,0.35) !important; }
-  .mwrap svg .note { fill: #1a1800 !important; stroke: #ffd600 !important; }
+  .mwrap svg .actor { fill: rgba(255,107,53,0.12) !important; stroke: #ff6b35 !important; }
+  .mwrap svg .actor text, .mwrap svg .actor tspan { fill: #ff6b35 !important; color: #ff6b35 !important; }
+  .mwrap svg .actorBkg { fill: rgba(255,107,53,0.12) !important; }
+  .mwrap svg .actorBorder { stroke: #ff6b35 !important; fill: rgba(255,107,53,0.12) !important; }
+  .mwrap svg .actor-line { stroke: rgba(255,255,255,0.6) !important; stroke-width: 3px !important; }
+  /* Sequence diagram message arrows */
+  .mwrap svg .messageLine0, .mwrap svg .messageLine1 { stroke: rgba(255,255,255,0.7) !important; stroke-width: 3px !important; }
+  .mwrap svg line[class*="message"], .mwrap svg path[class*="message"] { stroke: rgba(255,255,255,0.7) !important; stroke-width: 3px !important; }
+  .mwrap svg .note { fill: rgba(255,214,0,0.12) !important; stroke: rgba(255,214,0,0.4) !important; }
   .mwrap svg .activation0, .mwrap svg .activation1, .mwrap svg .activation2 { fill: #00101a !important; stroke: #00acc1 !important; }
   .mwrap svg .loopLine { stroke: #ff6b35 !important; }
   .mwrap svg .loopText { fill: #ff6b35 !important; }
@@ -262,15 +268,15 @@
   .obj-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; flex: 1; }
   .obj-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 24px 26px; display: flex; gap: 16px; align-items: flex-start; }
   .obj-num { font-size: 34px; font-weight: 700; color: var(--accent); opacity: .4; line-height: 1; flex-shrink: 0; width: 38px; }
-  .obj-body h3 { font-size: 22px; margin-bottom: 6px; }
-  .obj-body p { font-size: 19px; }
+  .obj-body h3 { font-size: 24px; margin-bottom: 6px; }
+  .obj-body p { font-size: 21px; }
 
   /* ── PRINCIPLE ITEM ── */
   .prin-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; flex: 1; }
   .prin-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 24px 26px; }
   .prin-icon { font-size: 28px; margin-bottom: 10px; }
-  .prin-item h3 { font-size: 20px; margin-bottom: 8px; }
-  .prin-item p { font-size: 18px; }
+  .prin-item h3 { font-size: 22px; margin-bottom: 8px; }
+  .prin-item p { font-size: 20px; }
 </style>
 </head>
 <body>
@@ -280,11 +286,11 @@
      SLIDE 1 — TITLE
 ═══════════════════════════ -->
 <div class="slide active" id="slide-1">
-  <div class="slide-num">1 / 23</div>
+  <div class="slide-num">1 / 25</div>
   <div style="flex:1; display:flex; flex-direction:column; justify-content:center;">
     <div class="sec-hdr">
       <div class="line"></div>
-      <span class="badge bb">Agentic AI - Capstone Project · Carnegie Mellon Universitiy · Enrique Corona</span>
+      <span class="badge r" style="font-size:32px;padding:6px 16px;">Agentic AI - Capstone Project · Carnegie Mellon Universitiy · Enrique Corona</span>
       <div class="line"></div>
     </div>
     <h1 style="margin-bottom:18px;"><span class="gradient-text">Multi-Agent Knowledge</span><br>Base System</h1>
@@ -299,12 +305,44 @@
       <span class="badge bb">LangGraph</span>
       <span class="badge bg">ChromaDB · Ollama</span>
       <span class="badge bp">MCP Protocol</span>
-      <span class="badge bo">Tree of Thoughts</span>
+      <span class="badge bo">React · Tree of Thoughts · Auto-RAG</span>
       <span class="badge br">Vue 3 + Quasar</span>
       <span class="badge bb">llama3.1:8b</span>
       <span class="badge bg">OpenTelemetry</span>
-      <span class="badge bp">Auto-RAG</span>
-      <span class="badge bo">ReAct</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════
+     SLIDE 2 — PROBLEM DEFINITION
+═══════════════════════════ -->
+<div class="slide" id="slide-2">
+  <div class="slide-num">2 / 25</div>
+  <div class="label r">Problem</div>
+  <h2>Problem Definition</h2>
+  <div class="cols c2" style="gap:20px; flex:1; align-content:start;">
+    <div class="card ar">
+      <div class="label r">Pain Points in a 20+ Year Org</div>
+      <ul>
+        <li><strong>Stale documentation</strong> — written once during the first sprint, never updated as the system evolves; decisions get made on outdated assumptions</li>
+        <li><strong>Knowledge silos</strong> — tribal knowledge spread across Quip, Confluence, wikis, email threads, and people who have since left</li>
+        <li><strong>Late dependency discovery</strong> — integration failures and missing dependencies surface at release time, not during design</li>
+        <li><strong>No architecture map</strong> — nobody can confidently answer "what services implement this product?" or "who calls this endpoint?"</li>
+        <li><strong>Cross-org black boxes</strong> — upstream and downstream dependencies are poorly documented, making it hard to prioritize or measure integration risk</li>
+      </ul>
+    </div>
+    <div class="card ab">
+      <div class="label p">Why a Standalone LLM Falls Short</div>
+      <ul>
+        <li><strong>Multiple data sources</strong> — source code, telemetry, Quip, Confluence, wikis, APIs; no single LLM context can hold all of it</li>
+        <li><strong>Incomplete &amp; inaccurate input</strong> — documents are stale, conflicting, or missing entirely; raw retrieval amplifies the problem</li>
+        <li><strong>No verification layer</strong> — a single model can't distinguish a correct claim from a plausible-sounding stale one without grounding</li>
+        <li><strong>No human escape hatch</strong> — when confidence is low, there's no mechanism to escalate to an expert and close the gap</li>
+      </ul>
+    </div>
+    <div class="card ag" style="grid-column: span 2;">
+      <div class="label g">The Opportunity</div>
+      <p style="font-size:20px; color:var(--text); line-height:1.7;">Modernisation efforts in a 20+ year old org stall on one recurring problem: <strong>nobody has an accurate, current map of the system.</strong> A Research Agent that <strong>continuously updates and enriches</strong> documentation collapses gap-analysis lead time from weeks of manual archaeology to on-demand answers — giving every team a single source of truth they can trust.</p>
     </div>
   </div>
 </div>
@@ -312,8 +350,8 @@
 <!-- ═══════════════════════════
      SLIDE 2 — OBJECTIVES
 ═══════════════════════════ -->
-<div class="slide" id="slide-2">
-  <div class="slide-num">2 / 23</div>
+<div class="slide" id="slide-3">
+  <div class="slide-num">3 / 25</div>
   <div class="label b">Project Overview</div>
   <h2>Objectives</h2>
   <p class="lead" style="margin-bottom:20px;">What We Set Out to Build</p>
@@ -354,86 +392,40 @@
 <!-- ═══════════════════════════
      SLIDE 3 — PRINCIPLES
 ═══════════════════════════ -->
-<div class="slide" id="slide-3">
-  <div class="slide-num">3 / 23</div>
+<div class="slide" id="slide-4">
+  <div class="slide-num">4 / 25</div>
   <div class="label ab">Design Principles</div>
-  <h2>Guiding Principles for the Agent</h2>
+  <h2>Guiding Principles for the Agents</h2>
   <div class="prin-grid">
     <div class="prin-item">
       <div class="prin-icon">🔒</div>
-      <h3>Read-Only on External Systems</h3>
-      <p>The agent only reads source code, telemetry, Quip, Confluence, and GitHub issues. It writes exclusively to the BP/SD documentation pages it owns and to its own embedding store. No side-effects on production systems.</p>
+      <h3>Read-Only</h3>
+      <p>The agent's purpose is to gather, organise, and surface knowledge — not to act on it. It reads source code, telemetry, and documentation, and writes only to the documentation pages it owns. No side-effects on production systems, ever.</p>
     </div>
     <div class="prin-item">
-      <div class="prin-icon">📋</div>
-      <h3>Git-Backed Pages</h3>
-      <p>All generated docs live in a versioned Git repo. Every page write is a commit. Regressions roll back with <code>git revert</code> and re-indexing falls out of the next scheduled refresh automatically.</p>
+      <div class="prin-icon">🔄</div>
+      <h3>Always Up to Date</h3>
+      <p>The knowledge base refreshes continuously as code and docs change. Every run re-checks freshness, re-grades existing pages, and closes stale gaps automatically — documentation that drifts gets corrected on the next cycle without manual intervention.</p>
     </div>
     <div class="prin-item">
       <div class="prin-icon">👥</div>
       <h3>Human-in-the-Loop</h3>
-      <p>When the agent can't resolve a gap with confidence, it escalates to a subject-matter expert through the Portal — never during a user query, only during background builds. SME answers feed back into the index, closing the loop.</p>
+      <p>When confidence is low the agent surfaces the gap to a subject-matter expert through the Portal rather than inventing an answer. SME replies enrich the index directly — closing the loop and preventing the same question from being escalated twice.</p>
     </div>
     <div class="prin-item">
-      <div class="prin-icon">⛓</div>
-      <h3>Bounded Loops — No Runaway Agents</h3>
-      <p>Every cycle has an explicit cap: Auto-RAG rewrites bounded to R=2, ToT beam search to B=2-3 / D=2-3. After the cap the loop returns a degraded-but-safe outcome (<code>low_confidence</code> or <code>exhausted</code>), never recurses further.</p>
+      <div class="prin-icon">🛡️</div>
+      <h3>Secure &amp; Privacy-Aware</h3>
+      <p>No PII data is retained at any stage. Access is scoped to the organisation's own systems. The LLM runs locally (llama3.1:8b on Ollama) so no document content leaves the network. Call logs capture counts and status — never raw text.</p>
     </div>
     <div class="prin-item">
       <div class="prin-icon">🔌</div>
-      <h3>MCP Contracts for Isolation</h3>
-      <p>Agents never call peers directly — all traffic flows through typed MCP contracts. Each agent is wired to a fixed tool set. Adding a new specialist is a registration + one routing rule; existing agents are unaffected.</p>
+      <h3>Extensible by Design</h3>
+      <p>Every agent communicates through typed MCP contracts. Adding a new specialist — a new data source, a new domain — is a registration and a routing rule; existing agents are untouched. The architecture grows without rewiring the core.</p>
     </div>
     <div class="prin-item">
       <div class="prin-icon">🔭</div>
       <h3>Observable by Default</h3>
-      <p>Every inbound/outbound MCP call emits an OpenTelemetry span. Every LLM call is logged to an audit DB. Payload summaries are captured (counts, IDs, status) but never raw query text or document content.</p>
-    </div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════
-     SLIDE 4 — PROBLEM & CONTEXT
-═══════════════════════════ -->
-<div class="slide" id="slide-4">
-  <div class="slide-num">4 / 23</div>
-  <div class="label r">Context</div>
-  <h2>Problem &amp; Four-Agent Architecture</h2>
-  <div class="cols c2" style="gap:20px; flex:1; align-content:start;">
-    <div class="card ar">
-      <div class="label r">Pain Points in a 20+ Year Org</div>
-      <ul>
-        <li><strong>Stale documentation</strong> — written once, never updated after the first sprint</li>
-        <li><strong>Knowledge silos</strong> — Quip, Confluence, wikis, tribal memory, email threads</li>
-        <li><strong>Late dependency discovery</strong> — integration failures found at release, not design</li>
-        <li><strong>No architecture map</strong> — nobody can answer "what does this service own?" confidently</li>
-      </ul>
-    </div>
-    <div class="card ag">
-      <div class="label g">Why Four Agents?</div>
-      <ul>
-        <li><strong>B&amp;P + SD split</strong> — different reasoning, different source material, different page shapes</li>
-        <li><strong>Orchestrator</strong> — centralised routing, SME queue, state; specialists stay focused</li>
-        <li><strong>RAG Service</strong> — shared embedding model, one consistent retrieval behaviour; new specialists get it free</li>
-      </ul>
-    </div>
-    <div class="card ab">
-      <div class="label">Per-Agent Ownership</div>
-      <table>
-        <tr><th>Agent</th><th>Owns</th><th>Does not own</th></tr>
-        <tr><td><strong>Orchestrator</strong></td><td>SME queue, routing rules</td><td>Any content or indexes</td></tr>
-        <tr><td><strong>B&amp;P Service</strong></td><td>BP pages, BP doc index</td><td>Embedding store, SD pages</td></tr>
-        <tr><td><strong>SD Service</strong></td><td>SD pages, SD doc index</td><td>Embedding store, BP pages</td></tr>
-        <tr><td><strong>RAG Service</strong></td><td>Embeddings DB, chunking</td><td>GitHub, SME state, pages</td></tr>
-      </table>
-    </div>
-    <div class="card ao">
-      <div class="label o">Three-Layer Safety</div>
-      <ul>
-        <li><strong>Preventive</strong> — loop bounds, fixed tool access per agent, cross-domain isolation</li>
-        <li><strong>Detective</strong> — OTel trace stream, escalation rate, grader-fail rate, latency p50/p95</li>
-        <li><strong>Corrective</strong> — SME escalation closes gaps with human-verified content; SME answers re-index automatically</li>
-      </ul>
+      <p>Every MCP call emits an OpenTelemetry span. Every LLM call is audited. Grader-fail rate, escalation rate, and index-quality hit rate are tracked in the dashboard — making invisible drift visible before it becomes a problem.</p>
     </div>
   </div>
 </div>
@@ -442,7 +434,7 @@
      SLIDE 5 — PEAR STORE SETUP
 ═══════════════════════════ -->
 <div class="slide" id="slide-5">
-  <div class="slide-num">5 / 23</div>
+  <div class="slide-num">5 / 25</div>
   <div class="label r">Experiment Setup</div>
   <h2>Pear Store — Synthetic Test Corpus</h2>
   <div class="cols c2" style="gap:24px; flex:1; align-content:start;">
@@ -489,7 +481,7 @@
      SLIDE 6 — PEAR STORE DOC LEVELS
 ═══════════════════════════ -->
 <div class="slide" id="slide-6">
-  <div class="slide-num">6 / 23</div>
+  <div class="slide-num">6 / 25</div>
   <div class="label r">Experiment Setup</div>
   <h2>Pear Store — Documentation Levels</h2>
   <div class="cols c2" style="gap:24px; flex:1; align-content:start;">
@@ -514,21 +506,60 @@
     <div class="card ag">
       <div class="label g">SD Gap Map (selected)</div>
       <table>
-        <tr><th>Area</th><th>Gap</th></tr>
-        <tr><td>Services</td><td>account (1 para), review (typos + wrong fields), payment (no provider semantics)</td></tr>
-        <tr><td>Databases</td><td>order-db, fulfillment-db, pearcare-plan-db — entirely missing</td></tr>
-        <tr><td>Telemetry</td><td>4 uninstrumented services have no doc; catalog.md is 3 lines</td></tr>
-        <tr><td>Runbooks</td><td>incident-response.md says "page someone" — that's the entire doc</td></tr>
+        <tr><th>Area</th><th>What's Missing</th></tr>
+        <tr><td>Services</td><td><code>account.md</code> — no auth flow or session lifecycle<br><code>review.md</code> — wrong endpoint names, rate limits absent<br><code>payment.md</code> — PSP provider field missing, retry policy absent</td></tr>
+        <tr><td>Databases</td><td><code>order-db</code>, <code>fulfillment-db</code>, <code>pearcare-plan-db</code> — entirely absent (no schema, no indexes, no FK definitions)</td></tr>
+        <tr><td>Telemetry</td><td><code>catalog.md</code> — 3-line stub, no spans defined · <code>search.md</code> — no entries · <code>account</code> + <code>fulfillment</code> uninstrumented</td></tr>
+        <tr><td>Runbooks</td><td><code>incident-response.md</code> — no on-call rotation, no escalation path, no rollback steps</td></tr>
       </table>
     </div>
     <div class="card ao">
       <div class="label o">BP Gap Map (selected)</div>
       <table>
-        <tr><th>Business Case</th><th>Quality</th></tr>
-        <tr><td>catalog-discovery · purchase-flow</td><td><strong style="color:var(--accent2);">HIGH</strong> — full with levers &amp; metrics</td></tr>
-        <tr><td>refunds · pearcare-cancellations</td><td><strong style="color:var(--accent5);">LOW</strong> — mostly TODOs, no numbers</td></tr>
-        <tr><td>ratings-trust · piracy-and-licensing</td><td><strong style="color:var(--accent3);">VERY LOW</strong> — a few sentences or rambling</td></tr>
+        <tr><th>Business Case</th><th>What's Missing</th></tr>
+        <tr><td>catalog-discovery · purchase-flow <strong style="color:var(--accent2);">(HIGH)</strong></td><td>Full with levers &amp; metrics — used as enrichment anchor</td></tr>
+        <tr><td>refunds · pearcare-cancellations <strong style="color:var(--accent5);">(LOW)</strong></td><td>No dollar thresholds, SLA timelines, churn rates or retention metrics</td></tr>
+        <tr><td>ratings-trust · piracy-and-licensing <strong style="color:var(--accent3);">(VERY LOW)</strong></td><td>No abuse detection criteria, no enforcement mechanism, no revenue impact data</td></tr>
+        <tr><td>developer-payouts · pearcare-claim-economics <strong style="color:var(--accent3);">(MEDIUM)</strong></td><td>Named gaps, no payout schedule or claim approval SLAs</td></tr>
       </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════
+     SLIDE 7 — ARCHITECTURE OVERVIEW
+═══════════════════════════ -->
+<div class="slide" id="slide-7">
+  <div class="slide-num">7 / 25</div>
+  <div class="label ab">Architecture</div>
+  <h2>Architecture Overview</h2>
+  <div class="cols c2" style="gap:20px; flex:1; align-content:start;">
+    <div class="card ab">
+      <div class="label p">Orchestrator <span class="badge bb" style="font-size:13px;margin-left:6px;">Supervisor</span></div>
+      <p style="margin-bottom:8px;">Routes work and holds all cross-agent state — no content of its own. It routes Portal queries to the right specialist, forwards refresh events from the Update Trigger, and deduplicates SME questions by topic.</p>
+      <ul>
+        <li><strong>Owns</strong> — pending SME questions queue, specialist registry, routing rules</li>
+        <li><strong>Does not own</strong> — any documentation content, indexes, or embedding pipeline; all deep work is delegated to specialists</li>
+        <li><strong>Interaction pattern</strong> — receives task envelopes from Portal or Trigger, returns structured responses or escalations from specialists</li>
+      </ul>
+    </div>
+    <div class="card ag">
+      <div class="label g">B&amp;P + SD Specialists <span class="badge bg" style="font-size:13px;margin-left:6px;">Domain Experts</span></div>
+      <p style="margin-bottom:8px;">Two separate agents, each owning a distinct documentation domain with different source material and reasoning requirements. Cross-domain references flow through typed MCP calls — never direct function calls.</p>
+      <ul>
+        <li><strong>B&amp;P owns</strong> — BP pages in GitHub, BP doc index (content hash, open placeholders, embedding revision), BP sources inventory</li>
+        <li><strong>SD owns</strong> — SD pages in GitHub, SD doc index, SD sources inventory; reads source code via GitHub MCP and telemetry via Monitoring MCP</li>
+        <li><strong>Neither embeds directly</strong> — both delegate chunking, embedding and retrieval to the RAG Service via <code>RAG_MCP.index()</code> and <code>RAG_MCP.retrieve()</code></li>
+      </ul>
+    </div>
+    <div class="card ao" style="grid-column: span 2;">
+      <div class="label o">RAG Service <span class="badge bp" style="font-size:13px;margin-left:6px;">Shared Infrastructure</span></div>
+      <p style="margin-bottom:8px;">The fourth agent is not a content specialist — it's shared retrieval infrastructure that both specialists depend on. Co-locating embedding, chunking, and the Auto-RAG loop here means consistent retrieval behaviour and a free upgrade path for any future specialist.</p>
+      <div class="cols c3" style="gap:14px;margin-top:8px;">
+        <div><p style="color:var(--text);margin-bottom:4px;"><strong>Owns</strong></p><p>Shared Embeddings DB · embedding model · Auto-RAG loop · ToT chunking-strategy sub-graph</p></div>
+        <div><p style="color:var(--text);margin-bottom:4px;"><strong>Does not own</strong></p><p>Source code access · GitHub writes · SME state · any per-page metadata; stateless across requests except the vector store</p></div>
+        <div><p style="color:var(--text);margin-bottom:4px;"><strong>Domain isolation</strong></p><p>All chunks carry a <code>domain</code> tag (<code>bp</code> | <code>sd</code>). Cross-domain queries drop the filter — no merge step, no peer-MCP call</p></div>
+      </div>
     </div>
   </div>
 </div>
@@ -536,8 +567,8 @@
 <!-- ═══════════════════════════
      SLIDE 5 — HIGH-LEVEL ARCH
 ═══════════════════════════ -->
-<div class="slide" id="slide-7">
-  <div class="slide-num">7 / 23</div>
+<div class="slide" id="slide-8">
+  <div class="slide-num">8 / 25</div>
   <div class="label">Architecture</div>
   <h2>High-Level Architecture Diagram</h2>
   <div class="mwrap scroll" style="flex:1;" data-zoom="4" data-scroll-x="-500" data-scroll-y="200">
@@ -632,8 +663,8 @@ flowchart LR
 <!-- ═══════════════════════════
      SLIDE 6 — AUTO-RAG LOOP
 ═══════════════════════════ -->
-<div class="slide" id="slide-8">
-  <div class="slide-num">8 / 23</div>
+<div class="slide" id="slide-9">
+  <div class="slide-num">9 / 25</div>
   <div class="label r">RAG Service</div>
   <h2>Auto-RAG Loop — Self-Correcting Retrieval</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
@@ -697,14 +728,14 @@ flowchart LR
 <!-- ═══════════════════════════
      SLIDE 7 — ToT CHUNKING
 ═══════════════════════════ -->
-<div class="slide" id="slide-9">
-  <div class="slide-num">9 / 23</div>
+<div class="slide" id="slide-10">
+  <div class="slide-num">10 / 25</div>
   <div class="label r">RAG Service</div>
   <h2>ToT Chunking Strategy Selector</h2>
-  <div class="cols c-side" style="gap:28px; flex:1;">
-    <div class="mwrap scroll" style="max-width:850px;" data-zoom="4">
+  <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
+    <div class="mwrap scroll" style="width:100%;max-height:500px;" data-zoom="3" data-scroll-x="0" data-scroll-y="250">
       <pre class="mermaid">
-flowchart TD
+flowchart LR
     In(["RAG_MCP.index\nnew document"]) --> Gen["Generate K=4 candidate strategies\nper-paragraph · per-section\nper-N-chars · summary-only · hybrid"]
     Gen --> Emb["Embed + chunk each candidate\ninto temporary index"]
     Emb --> Probe["Probe: LLM generates\nN student Q+A pairs\nfrom the document"]
@@ -725,7 +756,7 @@ flowchart TD
     class In,Out boundary
       </pre>
     </div>
-    <div style="display:flex;flex-direction:column;gap:16px;">
+    <div class="cols c3" style="gap:16px;">
       <div class="card ar">
         <div class="label r">Why ToT for Chunking?</div>
         <p style="margin-bottom:8px;">Chunking strategy is a high-leverage, low-frequency decision: a bad split hurts every future retrieval from that document. Alternatives are cheap to generate and scoring is reliable (probe Q&amp;A similarity), making this an ideal ToT application point.</p>
@@ -753,13 +784,13 @@ flowchart TD
 <!-- ═══════════════════════════
      SLIDE 8 — SD dispatch_refresh
 ═══════════════════════════ -->
-<div class="slide" id="slide-10">
-  <div class="slide-num">10 / 23</div>
+<div class="slide" id="slide-11">
+  <div class="slide-num">11 / 25</div>
   <div class="label p">System Design Service</div>
   <h2>SD Service — dispatch_refresh Entry Point</h2>
   <div class="cols c2" style="gap:28px; flex:1;">
     <div style="display:flex;flex-direction:column;gap:14px;">
-      <div class="mwrap" style="flex:1;" data-zoom="1.5">
+      <div class="mwrap scroll" style="max-height:600px;" data-zoom="1.75">
         <pre class="mermaid">
 flowchart TD
     Start(["dispatch_refresh"]) --> ListP["list_pages"]
@@ -812,13 +843,13 @@ flowchart TD
 <!-- ═══════════════════════════
      SLIDE 9 — SD per-page enrich
 ═══════════════════════════ -->
-<div class="slide" id="slide-11">
-  <div class="slide-num">11 / 23</div>
+<div class="slide" id="slide-12">
+  <div class="slide-num">12 / 25</div>
   <div class="label p">System Design Service</div>
   <h2>SD Service — Per-Page Enrichment Flow</h2>
-  <div class="mwrap tall" style="flex:1;" data-zoom="4.5">
+  <div class="mwrap tall" style="flex:1;" data-zoom="4" data-scroll-x="0" data-scroll-y="150">
     <pre class="mermaid">
-flowchart TB
+flowchart LR
     Start(["_refresh_one_page"]) --> Read["read existing page"]
     Read --> Resolve["resolve owning service\n(DB-naming convention)"]
     Resolve --> Pull["analyze_code\nproduces analysis_summary"]
@@ -858,12 +889,12 @@ flowchart TB
 <!-- ═══════════════════════════
      SLIDE 10 — SD ReAct + analyze_code
 ═══════════════════════════ -->
-<div class="slide" id="slide-12">
-  <div class="slide-num">12 / 23</div>
+<div class="slide" id="slide-13">
+  <div class="slide-num">13 / 25</div>
   <div class="label p">System Design Service</div>
   <h2>SD Service — ReAct Loop &amp; analyze_code</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
-    <div class="mwrap scroll" style="width:100%;max-height:400px;" data-zoom="2.5" data-scroll-x="0" data-scroll-y="200">
+    <div class="mwrap scroll" style="width:100%;max-height:400px;" data-zoom="3" data-scroll-x="0" data-scroll-y="275">
       <pre class="mermaid">
 flowchart LR
     Trig(["Update Trigger"]) --> Pull["pull source\nvia GitHub MCP"]
@@ -920,13 +951,13 @@ flowchart LR
 <!-- ═══════════════════════════
      SLIDE 11 — BP dispatch_refresh
 ═══════════════════════════ -->
-<div class="slide" id="slide-13">
-  <div class="slide-num">13 / 23</div>
+<div class="slide" id="slide-14">
+  <div class="slide-num">14 / 25</div>
   <div class="label g">Business + Product Service</div>
   <h2>BP Service — dispatch_refresh Entry Point</h2>
   <div class="cols c2" style="gap:28px; flex:1;">
     <div style="display:flex;flex-direction:column;gap:14px;">
-      <div class="mwrap" style="flex:1;max-width:750px;" data-zoom="2.5">
+      <div class="mwrap" style="flex:1;max-width:1050px;" data-zoom="2.5">
         <pre class="mermaid">
 flowchart TD
     Start(["dispatch_refresh"]) --> ListP["list_pages"]
@@ -979,13 +1010,13 @@ flowchart TD
 <!-- ═══════════════════════════
      SLIDE 12 — BP per-page enrich
 ═══════════════════════════ -->
-<div class="slide" id="slide-14">
-  <div class="slide-num">14 / 23</div>
+<div class="slide" id="slide-15">
+  <div class="slide-num">15 / 25</div>
   <div class="label g">Business + Product Service</div>
   <h2>BP Service — Per-Page Enrichment Flow</h2>
-  <div class="mwrap tall" style="flex:1;" data-zoom="4">
+  <div class="mwrap tall" style="flex:1;" data-zoom="4" data-scroll-x="0" data-scroll-y="200">
     <pre class="mermaid">
-flowchart TB
+flowchart LR
     Start(["_refresh_one_page"]) --> Read["read existing page"]
     Read --> Pull["collect SD summary\nvia SD_MCP"]
     Pull --> Skip{"page_hash and\nside_info_revision\nboth unchanged?"}
@@ -1024,8 +1055,8 @@ flowchart TB
 <!-- ═══════════════════════════
      SLIDE 13 — BP ReAct Loop
 ═══════════════════════════ -->
-<div class="slide" id="slide-15">
-  <div class="slide-num">15 / 23</div>
+<div class="slide" id="slide-16">
+  <div class="slide-num">16 / 25</div>
   <div class="label g">Business + Product Service</div>
   <h2>BP Service — ReAct Loop</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
@@ -1077,13 +1108,13 @@ flowchart LR
 <!-- ═══════════════════════════
      SLIDE 14 — ORCH event routing
 ═══════════════════════════ -->
-<div class="slide" id="slide-16">
-  <div class="slide-num">16 / 23</div>
+<div class="slide" id="slide-17">
+  <div class="slide-num">17 / 25</div>
   <div class="label o">Orchestrator</div>
   <h2>Orchestrator — Event Routing</h2>
   <div class="cols c2" style="gap:28px; flex:1;">
     <div style="display:flex;flex-direction:column;gap:14px;">
-      <div class="mwrap" style="flex:1;max-width:750px;" data-zoom="2.5">
+      <div class="mwrap" style="flex:1;max-width:1050px;" data-zoom="2.5">
         <pre class="mermaid">
 flowchart TD
     Start(["REST event"]) --> Route["route\nclassify event_type"]
@@ -1135,12 +1166,12 @@ flowchart TD
 <!-- ═══════════════════════════
      SLIDE 15 — ORCH ReAct Loop
 ═══════════════════════════ -->
-<div class="slide" id="slide-17">
-  <div class="slide-num">17 / 23</div>
+<div class="slide" id="slide-18">
+  <div class="slide-num">18 / 25</div>
   <div class="label o">Orchestrator</div>
   <h2>Orchestrator — ReAct Loop</h2>
   <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
-    <div class="mwrap scroll" style="width:100%;max-height:500px;" data-zoom="1.5">
+    <div class="mwrap scroll" style="width:100%;max-height:600px;" data-zoom="1.75">
       <pre class="mermaid">
 flowchart LR
     Port(["Portal query"]) --> Route
@@ -1198,14 +1229,14 @@ flowchart LR
 <!-- ═══════════════════════════
      SLIDE 16 — ORCH query merge
 ═══════════════════════════ -->
-<div class="slide" id="slide-18">
-  <div class="slide-num">18 / 23</div>
+<div class="slide" id="slide-19">
+  <div class="slide-num">19 / 25</div>
   <div class="label o">Orchestrator</div>
   <h2>Orchestrator — Query Merge &amp; Polish</h2>
-  <div class="cols c-side" style="gap:28px; flex:1;">
-    <div class="mwrap scroll" style="max-width:850px;" data-zoom="4">
+  <div style="display:flex;flex-direction:column;gap:20px;flex:1;">
+    <div class="mwrap scroll" style="width:100%;max-height:400px;" data-zoom="4" data-scroll-x="0" data-scroll-y="425">
       <pre class="mermaid">
-flowchart TB
+flowchart LR
     Start(["portal_query"]) --> Class["classify domain\nBP / SD / both"]
     Class --> Pick{"single or both?"}
     Pick -->|single| Single["dispatch to one specialist"]
@@ -1230,7 +1261,7 @@ flowchart TB
     class Start,Out boundary
       </pre>
     </div>
-    <div style="display:flex;flex-direction:column;gap:16px;">
+    <div class="cols c3" style="gap:16px;">
       <div class="card ao">
         <div class="label o">Why Merge at the Orchestrator?</div>
         <p>Specialists answer independently from their domain. The orchestrator is the only node with both responses — it dedupes sources, collapses near-identical prose, and runs a final editorial pass before the answer reaches the user.</p>
@@ -1257,11 +1288,11 @@ flowchart TB
 <!-- ═══════════════════════════
      SLIDE 17 — SME INTERACTION
 ═══════════════════════════ -->
-<div class="slide" id="slide-19">
-  <div class="slide-num">19 / 23</div>
+<div class="slide" id="slide-20">
+  <div class="slide-num">20 / 25</div>
   <div class="label r">Human-in-the-Loop</div>
   <h2>SME Interaction &amp; Re-Integration</h2>
-  <div class="mwrap scroll" style="flex:1;" data-zoom="2.5">
+  <div class="mwrap scroll" style="flex:1;" data-zoom="2.75">
     <pre class="mermaid">
 sequenceDiagram
     participant Trig as Update Trigger
@@ -1274,7 +1305,7 @@ sequenceDiagram
 
     Trig ->> OC: Refresh event
     OC ->> Spec: Dispatch refresh task
-    Note over Spec: Background build hits unresolvable gap:<br/>Auto-RAG exhausted · dep-graph tie<br/>dynamic route · cross-ref unresolved
+    Note over OC,Docs: Background build hits unresolvable gap:<br/>Auto-RAG exhausted · dep-graph tie<br/>dynamic route · cross-ref unresolved
     Spec ->> Docs: Commit page with SME-PLACEHOLDER block(s)
     Spec -->> OC: Escalation envelope (question_id, originating_page, best_guess, trail)
     OC ->> OC: Queue in pending_sme_questions<br/>dedup by topic · resolve SME from registry
@@ -1295,11 +1326,11 @@ sequenceDiagram
 <!-- ═══════════════════════════
      SLIDE 18 — PORTAL & INFRA
 ═══════════════════════════ -->
-<div class="slide" id="slide-20">
-  <div class="slide-num">20 / 23</div>
+<div class="slide" id="slide-21">
+  <div class="slide-num">21 / 25</div>
   <div class="label ab">Portal &amp; Observability</div>
   <h2>Documentation Portal</h2>
-  <div style="display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:20px; flex:1;">
+  <div style="display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:20px; flex:1; min-height:0;">
 
     <!-- Top-left: Key Features bubble -->
     <div class="card ab" style="border-left:4px solid var(--accent4); display:flex; flex-direction:column; gap:10px;">
@@ -1314,12 +1345,12 @@ sequenceDiagram
     </div>
 
     <!-- Top-right: Screenshot 1 -->
-    <div class="shot" style="min-height:200px; padding:0; overflow:hidden;">
+    <div class="shot" style="padding:0; overflow:hidden;">
       <img src="images/dp-1.png" alt="Documentation Portal screenshot 1" style="width:100%;height:100%;object-fit:contain;border-radius:8px;" />
     </div>
 
     <!-- Bottom-left: Screenshot 2 -->
-    <div class="shot" style="min-height:140px; padding:0; overflow:hidden;">
+    <div class="shot" style="padding:0; overflow:hidden;">
       <img src="images/dp-2.png" alt="Documentation Portal screenshot 2" style="width:100%;height:100%;object-fit:contain;border-radius:8px;" />
     </div>
 
@@ -1342,8 +1373,8 @@ sequenceDiagram
 <!-- ═══════════════════════════
      SLIDE 21 — POC LIMITATIONS
 ═══════════════════════════ -->
-<div class="slide" id="slide-21">
-  <div class="slide-num">21 / 24</div>
+<div class="slide" id="slide-22">
+  <div class="slide-num">22 / 25</div>
   <div class="label r">PoC Scope</div>
   <h2>Proof-of-Concept Limitations</h2>
   <div class="cols c3" style="gap:18px; flex:1;">
@@ -1368,6 +1399,7 @@ sequenceDiagram
       <ul>
         <li><strong>No webhook</strong> — schedule-based or manual only</li>
         <li><strong>Git only</strong> — Slack, Confluence, email out of scope</li>
+        <li><strong>Python only</strong> — SD source analysis handles Python codebases; other languages not supported</li>
         <li><strong>Source code not in RAG</strong> — only BP docs and SD pages indexed</li>
       </ul>
     </div>
@@ -1399,8 +1431,8 @@ sequenceDiagram
 <!-- ═══════════════════════════
      SLIDE 22 — DEMO
 ═══════════════════════════ -->
-<div class="slide" id="slide-22">
-  <div class="slide-num">22 / 24</div>
+<div class="slide" id="slide-23">
+  <div class="slide-num">23 / 25</div>
   <div style="flex:1; display:flex; align-items:center; justify-content:center;">
     <h1 style="font-size:160px; letter-spacing:.1em; color:var(--accent); text-shadow:0 0 60px rgba(255,107,53,0.4);">DEMO</h1>
   </div>
@@ -1409,11 +1441,11 @@ sequenceDiagram
 <!-- ═══════════════════════════
      SLIDE 19 — RESULTS
 ═══════════════════════════ -->
-<div class="slide" id="slide-23">
-  <div class="slide-num">23 / 24</div>
+<div class="slide" id="slide-24">
+  <div class="slide-num">24 / 25</div>
   <div class="label ag">Results</div>
   <h2>Results</h2>
-  <div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr calc(1fr - 25px);gap:16px;flex:1;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:16px;flex:1;min-height:0;">
     <div class="card ag" style="display:flex;flex-direction:column;">
       <div class="label g">Key Results</div>
       <ul>
@@ -1428,11 +1460,25 @@ sequenceDiagram
     <div class="shot" style="padding:0;overflow:hidden;">
       <img src="images/dp-3.png" alt="Screenshot 1" style="width:100%;height:100%;object-fit:contain;border-radius:8px;" />
     </div>
-    <div class="shot" style="padding:0;overflow:hidden;">
-      <img src="images/dp-4.png" alt="Screenshot 2" style="width:100%;height:100%;object-fit:contain;border-radius:8px;" />
+    <div class="card ag" style="display:flex;flex-direction:column;">
+      <div class="label g">SD Gap → Impact</div>
+      <table style="margin-top:6px;">
+        <tr><th>Gap Area</th><th>What Changed</th></tr>
+        <tr><td>Services (account, review, payment)</td><td><code>account.md</code> rewritten — auth flow, session lifecycle &amp; correct endpoints added · <code>review.md</code> corrected · <code>payment.md</code> PSP &amp; retry policy filled · page grade: <strong style="color:var(--accent5);">LOW</strong> → <strong style="color:var(--accent2);">HIGH</strong></td></tr>
+        <tr><td>Databases (order-db, fulfillment-db, pearcare-plan-db)</td><td>3 pages created from scratch — schemas, index definitions &amp; FK relationships inferred from source code · DB queries previously returned 0 RAG results</td></tr>
+        <tr><td>Telemetry (catalog, search, account, fulfillment)</td><td><code>catalog.md</code> expanded from 3 lines to full span list · <code>search.md</code> created · <code>account</code> &amp; <code>fulfillment</code> documented — 4 pages indexed where 0 existed before</td></tr>
+        <tr><td>Runbooks (incident-response)</td><td>On-call rotation, escalation tree &amp; rollback steps added to empty doc · 4 SME questions answered &amp; merged back into the page</td></tr>
+      </table>
     </div>
-    <div class="shot" style="padding:0;overflow:hidden;">
-      <img src="images/dp-5.png" alt="Screenshot 3" style="width:100%;height:100%;object-fit:contain;border-radius:8px;" />
+    <div class="card ao" style="display:flex;flex-direction:column;">
+      <div class="label o">BP Gap → Impact</div>
+      <table style="margin-top:6px;">
+        <tr><th>Business Case</th><th>What Changed</th></tr>
+        <tr><td>catalog-discovery · purchase-flow <strong style="color:var(--accent2);">(HIGH)</strong></td><td>Levers, success metrics &amp; edge-case policies propagated from this anchor to 9 lower-quality BP pages via SD cross-references</td></tr>
+        <tr><td>refunds · pearcare-cancellations <strong style="color:var(--accent5);">(LOW)</strong></td><td>Refund ceiling, SLA windows (72h) &amp; churn baseline added from SD payment/fulfillment docs · grade: <strong style="color:var(--accent5);">LOW</strong> → <strong style="color:var(--accent3);">MEDIUM</strong></td></tr>
+        <tr><td>ratings-trust · piracy-and-licensing <strong style="color:var(--accent3);">(VERY LOW)</strong></td><td>Abuse scoring criteria, enforcement thresholds &amp; revenue exposure estimates filled from SD telemetry · grade: <strong style="color:var(--accent3);">VERY LOW</strong> → <strong style="color:var(--accent5);">LOW</strong></td></tr>
+        <tr><td>developer-payouts · pearcare-claim-economics <strong style="color:var(--accent3);">(MEDIUM)</strong></td><td>Monthly payout cycle, 5-day claim approval SLA &amp; dispute window documented · 100% cross-reference health · grade: <strong style="color:var(--accent3);">MEDIUM</strong> → <strong style="color:var(--accent2);">HIGH</strong></td></tr>
+      </table>
     </div>
   </div>
   </div>
@@ -1441,8 +1487,8 @@ sequenceDiagram
 <!-- ═══════════════════════════
      SLIDE 19 — TAKEAWAYS
 ═══════════════════════════ -->
-<div class="slide" id="slide-24">
-  <div class="slide-num">24 / 24</div>
+<div class="slide" id="slide-25">
+  <div class="slide-num">25 / 25</div>
   <div class="label p">Wrap-Up</div>
   <h2>Takeaways &amp; Learnings</h2>
 
@@ -1450,39 +1496,30 @@ sequenceDiagram
   <div class="cols c2" style="gap:16px; margin-bottom:14px;">
     <div class="card ar">
       <div class="label" style="margin-bottom:10px;">Key Takeaways</div>
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <div class="tbx">✏️ Add your key takeaway #1 here</div>
-        <div class="tbx">✏️ Add your key takeaway #2 here</div>
-        <div class="tbx">✏️ Add your key takeaway #3 here</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="tbx">Good system design + small local LLMs can deliver production-quality results — <strong>llama3.1:8b</strong> achieved <strong>88.4%</strong> re-grade pass rate &amp; <strong>82.5%</strong> ToT success with 0 errors across 1,500 calls</div>
+        <div class="tbx">Using LLMs as processing primitives — <strong>judges, classifiers, Q&amp;A generators</strong> — unlocks structured knowledge from raw unstructured docs at scale</div>
+        <div class="tbx">LLM latency is a <strong>first-class design constraint</strong> in multi-agent systems — loop bounds and beam width aren't just safety rails, they're performance decisions</div>
+        <div class="tbx"><strong>Software engineering best practices</strong> (typed contracts, OTel tracing, domain isolation) are directly transferable to agentic systems and make them debuggable</div>
+        <div class="tbx"><strong>Observability was the key feedback loop</strong> — index-quality hit rate, grader-fail rate &amp; escalation counts surfaced gaps no static analysis would have caught</div>
+        <div class="tbx"><strong>AI-assisted coding made this scale possible</strong> — a project of this scope wouldn't be achievable in the available timeframe without it; used with intent and understanding, it remains a genuinely <strong>didactic experience</strong></div>
       </div>
     </div>
     <div class="card ab">
       <div class="label" style="margin-bottom:10px;">What I Learned</div>
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <div class="tbx">✏️ Learning #1 — e.g. LangGraph / multi-agent design</div>
-        <div class="tbx">✏️ Learning #2 — e.g. MCP contracts and isolation</div>
-        <div class="tbx">✏️ Learning #3 — e.g. RAG self-correction loops</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="tbx"><strong>Multi-agent system design</strong> — agent isolation, loop bounds, SME-in-the-loop for confidence gaps, domain-separated ownership, and OTel observability as a core architectural concern</div>
+        <div class="tbx"><strong>RAG retrieval tuning is critical for quality</strong> — query parameters have a large impact on output; moving from <span style="color:var(--accent3);">TOP_K=4</span> to <span style="color:var(--accent2);">TOP_K=25</span> was one of the highest-leverage improvements in the pipeline</div>
+        <div class="tbx"><strong>Multi-agent systems require dedicated infrastructure</strong> — embedding databases (ChromaDB), agent-oriented observability platforms (OTel + audit logs), and typed inter-agent contracts aren't optional; they're load-bearing</div>
+        <div class="tbx"><strong>Agentic AI toolbox hands-on:</strong><br>
+          <span style="color:var(--accent2);">ReAct loops</span> · <span style="color:var(--accent4);">MCP contracts</span> · <span style="color:var(--accent3);">Tree-of-Thought</span> · <span style="color:var(--accent5);">LangGraph</span> · <span style="color:var(--accent2);">Auto-RAG</span> · <span style="color:var(--accent4);">Local LLMs (Ollama)</span>
+        </div>
+        <div class="tbx"><strong style="color:var(--accent);">What's still missing:</strong> a dedicated <strong>eval harness</strong> to catch quality regressions across pipeline changes — the LLM-as-grader works well at enrichment time but doesn't guard against silent degradation when prompts, models, or retrieval parameters change</div>
       </div>
     </div>
   </div>
 
-  <!-- Row 2: What Worked Well + What Was Hard + What's Next -->
-  <div class="cols c3" style="gap:16px; margin-bottom:14px;">
-    <div class="card ag">
-      <div class="label g" style="margin-bottom:10px;">What Worked Well</div>
-      <div class="tbx">✏️ Fill in here</div>
-    </div>
-    <div class="card ao">
-      <div class="label o" style="margin-bottom:10px;">What Was Hard</div>
-      <div class="tbx">✏️ Fill in here</div>
-    </div>
-    <div class="card ap">
-      <div class="label p" style="margin-bottom:10px;">What's Next</div>
-      <div class="tbx">✏️ Fill in here</div>
-    </div>
-  </div>
-
-  <!-- Row 3: Repos -->
+  <!-- Row 2: Repos -->
   <div class="cols c2" style="gap:16px; margin-bottom:14px;">
     <div class="card ar" style="display:flex;flex-direction:column;gap:6px;">
       <div class="label" style="margin-bottom:2px;">🗂 Project Repository</div>
@@ -1501,7 +1538,7 @@ sequenceDiagram
   </div>
 
   <!-- Row 4: Docs -->
-  <div style="display:flex;flex-direction:column;gap:14px;">
+  <div class="cols c2" style="gap:14px;">
     <div class="card ab" style="display:flex;flex-direction:column;gap:6px;">
       <div class="label" style="margin-bottom:2px;">🏛 Architecture Document</div>
       <a href="https://github.com/kikecorona/agentic-ai-capstone-project/blob/main/PROJECT_ARCHITECTURE.md" target="_blank"
@@ -1528,7 +1565,7 @@ sequenceDiagram
 </nav>
 
 <script>
-const TOTAL = 24;
+const TOTAL = 25;
 let current = 1;
 
 function updateNav() {
@@ -1673,12 +1710,24 @@ function fixDiagramColors() {
       if (el.closest('.cluster')) return;         // keep cluster subtle background
       var cls = (el.className && el.className.baseVal) || '';
       if (cls.includes('flowchart-link') || cls.includes('transition')) return; // keep edge strokes
+      if (cls.includes('note')) return;           // keep sequence diagram note styling
+      if (el.closest('.actor') || el.closest('.actor-man')) {
+        el.style.setProperty('fill', 'rgba(255,107,53,0.15)', 'important');
+        el.style.setProperty('stroke', '#ff6b35', 'important');
+        el.style.setProperty('stroke-width', SW, 'important');
+        return;
+      }
       el.style.setProperty('fill', 'transparent', 'important');
       // Only apply stroke to shapes that aren't pure edge connectors
       if (!cls.includes('flowchart-link') && !cls.includes('path')) {
         el.style.setProperty('stroke', STROKE, 'important');
         el.style.setProperty('stroke-width', SW, 'important');
       }
+    });
+    // Sequence diagram note backgrounds — target the <g> wrapper, not the inner rect
+    svg.querySelectorAll('g[data-et="note"]').forEach(function(el) {
+      el.style.setProperty('fill', 'rgba(255,214,0,0.15)', 'important');
+      el.style.setProperty('stroke', 'rgba(255,214,0,0.5)', 'important');
     });
     // Force white on all text
     svg.querySelectorAll('text, tspan').forEach(function(el) {

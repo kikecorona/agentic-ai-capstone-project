@@ -155,6 +155,7 @@
           base-path="documentation"
           :initial-file="originPageFile"
           hide-tree
+          force-branch="main"
           class="full-height"
         />
         <div v-else class="empty-state q-pa-lg">
